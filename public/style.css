@@ -1,0 +1,608 @@
+@font-face {
+  font-family: 'Open Sans';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/static/fonts/open-sans-latin.woff2?v=__FONT_VERSION__') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  --bg: #f7f8fa;
+  --surface: #ffffff;
+  --ink: #0e1220;
+  --label: #3c4354;
+  --muted: #5a6172;
+  --muted2: #8a90a0;
+  --muted3: #a6abb8;
+  --line: #e4e7ee;
+  --line2: #eef0f5;
+  --accent: #2140c8;
+  --accent-hover: #1a339f;
+  --accent-ink: #ffffff;
+  --accent-soft: #eef1fc;
+  --accent-soft-border: #c9d3f4;
+  --accent-focus: #dfe5fa;
+  --danger: #b3261e;
+  --danger-border: #e8b9b5;
+  --danger-soft-border: #f2d4d1;
+  --danger-soft: #fbecec;
+  --success: #1a7a42;
+  --success-soft: #e7f4ec;
+  --radius: 14px;
+  --radius-sm: 9px;
+  --radius-xs: 8px;
+  --shadow: 0 1px 2px rgba(14, 18, 32, .04);
+  --shadow-hover: 0 4px 16px rgba(14, 18, 32, .08);
+  --sans: 'Open Sans', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 16px/1.55 var(--sans);
+}
+main { padding: 36px 32px 56px; }
+/* Vertikaler Seiten-Stapel: einheitlicher 22px-Abstand zwischen Überschrift,
+   Karten und Sektionen (Karten selbst haben kein Außenmargin). */
+.page { display: flex; flex-direction: column; gap: 22px; }
+
+/* Sidebar */
+.shell { display: flex; min-height: 100vh; }
+.shell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sidebar {
+  flex: none; width: 280px; position: sticky; top: 0; height: 100vh; overflow-y: auto; overflow-x: hidden;
+  background: var(--surface); border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; gap: 4px; padding: 14px 14px 20px;
+}
+.sidebar-header { display: flex; align-items: center; padding: 0 0 14px; }
+.brand {
+  display: inline-flex; align-items: center; gap: 9px;
+  color: var(--ink); text-decoration: none; padding: 0 8px;
+  font-weight: 700; font-size: 17px; letter-spacing: -0.02em; overflow: hidden;
+}
+.sidebar-account {
+  position: relative;
+  border-top: 1px solid var(--line2); border-bottom: 1px solid var(--line2); margin-bottom: 8px;
+}
+.avatar {
+  flex: none; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700;
+}
+.account-trigger {
+  width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px;
+  background: transparent; border: none; cursor: pointer; border-radius: var(--radius-xs);
+}
+.account-trigger:hover { background: var(--line2); }
+.chevron-icon { width: 14px; height: 14px; flex: none; margin-left: auto; color: var(--muted2); }
+.account-menu {
+  display: none; position: absolute; left: 8px; right: 8px; top: calc(100% + 4px); z-index: 10;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-hover); padding: 6px;
+}
+.account-menu.open { display: block; }
+.account-menu a, .account-menu button {
+  all: unset; box-sizing: border-box;
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 10px; border-radius: var(--radius-xs);
+  font-size: 13.5px; font-weight: 500; color: var(--ink); cursor: pointer;
+}
+.account-menu a:hover, .account-menu button:hover { background: var(--accent-soft); color: var(--accent); }
+.account-menu form { margin: 0; }
+.menu-icon { width: 16px; height: 16px; flex: none; }
+.sidenav { display: flex; flex-direction: column; gap: 2px; }
+.sidenav .group-title {
+  margin: 16px 0 2px; padding: 0 12px;
+  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted2); white-space: nowrap; overflow: hidden;
+}
+.sidenav .group-title:first-child { margin-top: 0; }
+.navlink {
+  display: flex; align-items: center; gap: 10px;
+  color: var(--muted); text-decoration: none; white-space: nowrap;
+  padding: 8px 12px; border-radius: var(--radius-xs);
+  font-size: 14px; font-weight: 500;
+}
+.navlink:hover { color: var(--ink); }
+.navlink.active { color: var(--accent); font-weight: 600; background: var(--accent-soft); }
+.navicon { width: 16px; height: 16px; flex: none; }
+
+/* Nav-Accordion (z. B. "Admin-Einstellungen" mit Unterpunkten) */
+.nav-accordion { display: flex; flex-direction: column; }
+.accordion-toggle {
+  width: 100%; background: transparent; border: none; font-family: inherit; cursor: pointer;
+}
+.accordion-toggle:hover { background: transparent; border-color: transparent; color: var(--ink); }
+.accordion-chevron { width: 16px; height: 16px; flex: none; margin-left: auto; transition: transform .15s ease; color: var(--muted2); }
+.nav-accordion.open .accordion-chevron { transform: rotate(180deg); }
+.accordion-content { display: none; flex-direction: column; gap: 2px; padding-left: 14px; margin-top: 2px; }
+.nav-accordion.open .accordion-content { display: flex; }
+.navlink.sub { padding: 7px 12px 7px 24px; font-size: 13.5px; }
+.who-chip { font-size: 13px; color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.inline { display: inline; margin: 0; width: 100%; }
+
+/* Karten & Layout */
+/* Kein Außenmargin: Abstände zwischen Karten steuern die Seiten-Layouts
+   über ihre Flex-Gaps (22px), sonst addieren sich Margin und Gap. */
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 24px; box-shadow: var(--shadow);
+}
+.card.danger { border-color: var(--danger-soft-border); box-shadow: none; }
+.cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
+.hero { margin: 0; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+h1 { font-size: 26px; letter-spacing: -0.02em; margin: 0; }
+h2 { font-size: 15px; font-weight: 600; color: var(--ink); margin: 0 0 12px; text-transform: none; letter-spacing: 0; }
+h3 { font-size: 12px; font-weight: 600; color: var(--muted2); text-transform: uppercase; letter-spacing: .05em; margin: 0; }
+.muted { color: var(--muted2); }
+
+/* Formulare */
+label { display: block; font-size: 12.5px; font-weight: 600; color: var(--label); margin-bottom: 6px; }
+input, select, textarea {
+  width: 100%; padding: 9px 11px; font: inherit; font-size: 13.5px; color: var(--ink);
+  background: #fff; border: 1px solid #dde1ea; border-radius: var(--radius-sm);
+}
+/* Chrome/Edge erzwingen bei Autofill/Autocomplete eine eigene (blaue)
+   Hintergrundfarbe, die sich per background-color nicht überschreiben lässt –
+   nur der klassische box-shadow-inset-Trick gewinnt zuverlässig dagegen. */
+input:-webkit-autofill, input:-webkit-autofill:hover,
+input:-webkit-autofill:focus, input:-webkit-autofill:active {
+  -webkit-box-shadow: 0 0 0 1000px #fff inset;
+  box-shadow: 0 0 0 1000px #fff inset;
+  -webkit-text-fill-color: var(--ink);
+  caret-color: var(--ink);
+  transition: background-color 5000s ease-in-out 0s;
+}
+textarea { font-size: 13px; resize: vertical; }
+select {
+  appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  padding-right: 38px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%235a6172'%3E%3Cpath d='M11.625 14.913q-.175-.063-.325-.213l-4.6-4.6q-.275-.275-.275-.7t.275-.7t.7-.275t.7.275l3.9 3.9l3.9-3.9q.275-.275.7-.275t.7.275t.275.7t-.275.7l-4.6 4.6q-.15.15-.325.213t-.375.062t-.375-.062'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 16px center; background-size: 14px 14px;
+}
+/* Eigenes Dropdown-Menü (JS-Progressive-Enhancement über echtem <select>,
+   siehe app.js) – native Options-Listen lassen sich nicht browserübergreifend
+   im App-Design stylen. */
+.custom-select { position: relative; }
+.custom-select select { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.custom-select-trigger {
+  all: unset; box-sizing: border-box; display: flex; align-items: center; width: 100%;
+  padding: 9px 11px; font: inherit; font-size: 13.5px; cursor: pointer;
+  background: #fff; border: 1px solid #dde1ea;
+  border-radius: var(--radius-sm); color: var(--ink);
+}
+/* Der Trigger ist ein <button>, sonst würde die generische Regel
+   `button:hover` (Spezifität 0,1,1 > 0,1,0) hier einen blauen Hintergrund
+   erzwingen. Formularfelder färben sich nicht blau – nur der Rahmen dunkelt
+   leicht nach als Affordance. */
+.custom-select-trigger:hover { background: #fff; border-color: #c3c8d4; color: var(--ink); }
+.custom-select-trigger .chevron-icon { width: 14px; height: 14px; margin-left: auto; color: var(--muted); flex: none; transform: translateY(1px); }
+.custom-select-trigger:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent-focus); outline-offset: 0; }
+.custom-select-menu {
+  display: none; position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-hover); padding: 6px; max-height: 240px; overflow-y: auto;
+}
+.custom-select-menu.open { display: block; }
+.custom-select-option {
+  all: unset; box-sizing: border-box; display: block; width: 100%;
+  padding: 8px 10px; border-radius: var(--radius-xs); font-size: 13.5px; color: var(--ink); cursor: pointer;
+}
+.custom-select-option:hover { background: var(--line2); }
+.custom-select-option.active { color: var(--accent); font-weight: 600; background: var(--accent-soft); }
+
+/* Eigener Datum/Uhrzeit-Picker (siehe app.js), analog zum Custom-Dropdown
+   oben – native datetime-local-Popups lassen sich nicht im App-Design stylen. */
+.custom-datetime { position: relative; }
+.custom-datetime input[type="datetime-local"] { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
+.custom-datetime-trigger { gap: 9px; }
+.custom-datetime-trigger .dt-icon { width: 15px; height: 15px; flex: none; color: var(--muted); }
+.custom-datetime-trigger .dt-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.custom-datetime-trigger.dt-empty .dt-label { color: var(--muted3); }
+.custom-datetime-trigger:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent-focus); outline-offset: 0; }
+.custom-datetime-panel {
+  display: none; position: absolute; left: 0; top: calc(100% + 4px); z-index: 20;
+  width: 268px; max-width: calc(100vw - 16px);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-hover); padding: 14px;
+}
+/* Wird per JS gesetzt, wenn das Panel rechts aus dem Viewport ragen würde
+   (z. B. schmales Feld am rechten Rand). */
+.custom-datetime-panel.align-right { left: auto; right: 0; }
+.custom-datetime-panel.open { display: block; }
+.dt-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.dt-cal-header .pagination-arrow { width: 26px; height: 26px; }
+.dt-cal-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.dt-weekdays, .dt-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
+.dt-weekdays span { font-size: 11px; font-weight: 600; color: var(--muted3); padding: 4px 0; }
+.dt-day {
+  all: unset; box-sizing: border-box; display: flex; align-items: center; justify-content: center;
+  aspect-ratio: 1; border-radius: var(--radius-xs); font-size: 12.5px; color: var(--ink); cursor: pointer;
+}
+.dt-day:hover { background: var(--line2); }
+.dt-day.other-month { color: var(--muted3); }
+.dt-day.today { font-weight: 700; color: var(--accent); }
+.dt-day.selected { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.dt-time-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line2);
+}
+.dt-time-label { font-size: 12.5px; font-weight: 600; color: var(--label); }
+.dt-time-inputs { display: flex; align-items: center; gap: 4px; }
+.dt-time-inputs input {
+  width: 40px; padding: 6px 0; text-align: center; font-size: 13px;
+  -moz-appearance: textfield;
+}
+.dt-time-inputs input::-webkit-outer-spin-button, .dt-time-inputs input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.dt-time-sep { color: var(--muted2); font-weight: 600; }
+.dt-panel-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 14px; }
+.dt-panel-footer .btn { padding: 7px 14px; font-size: 12.5px; }
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  border-color: var(--accent); outline: 2px solid var(--accent-focus); outline-offset: 0;
+}
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+button, .btn {
+  font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block;
+  background: var(--accent); color: var(--accent-ink);
+  border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 9px 20px;
+}
+button:hover, .btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button.ghost, .btn.ghost {
+  background: transparent; color: var(--label); font-weight: 500; border-color: var(--line);
+}
+button.ghost:hover, .btn.ghost:hover { border-color: var(--accent); color: var(--accent); background: transparent; }
+button.destructive-ghost, .btn.destructive-ghost {
+  background: transparent; color: var(--danger); font-weight: 500; border-color: var(--danger-border);
+}
+button.destructive-ghost:hover, .btn.destructive-ghost:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+button:disabled, button:disabled:hover {
+  cursor: not-allowed; background: transparent; color: var(--muted3); border-color: var(--line2);
+}
+.stack > * + * { margin-top: 12px; }
+.grid-form { display: flex; flex-wrap: wrap; gap: 20px; align-items: end; }
+.grid-form .field { flex: 1 1 180px; }
+.grid-form .field.grow { flex: 3 1 300px; }
+.grid-form .field.submit { flex: 0 0 auto; }
+.radio-row { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
+.radio-row.divided { border-top: 1px solid var(--line2); padding-top: 20px; margin-top: 2px; }
+.radio-row .label-inline { font-size: 12.5px; font-weight: 600; color: var(--label); margin: 0; }
+.radio-row label { display: flex; align-items: center; gap: 10px; font-size: 13.5px; font-weight: 400; color: var(--muted); margin: 0; }
+.radio-row input[type=radio] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
+
+.create-actions { display: flex; align-items: center; gap: 14px; }
+/* Standardmäßig versteckt: Der Hinweis gehört zum JS-Smart-Disable des
+   Erstellen-Buttons – ohne JS gibt es kein Disable, also auch keinen Hinweis. */
+.create-hint { display: none; font-size: 13px; color: var(--muted2); white-space: nowrap; }
+.btn-create {
+  --create-grad: linear-gradient(180deg, color-mix(in srgb, var(--accent), white 14%), var(--accent));
+  display: inline-flex; align-items: center; gap: 9px; height: 44px; padding: 0 24px;
+  border: none; border-radius: 10px; font-size: 15px; font-weight: 600; letter-spacing: 0.01em;
+  background: var(--create-grad);
+  box-shadow: 0 1px 2px rgba(28, 33, 48, .3), inset 0 1px 0 rgba(255, 255, 255, .18);
+  transition: box-shadow .15s, transform .1s, filter .15s;
+}
+.btn-create:hover {
+  background: var(--create-grad); filter: brightness(0.92);
+  box-shadow: 0 3px 8px color-mix(in srgb, var(--accent), transparent 65%), inset 0 1px 0 rgba(255, 255, 255, .18);
+}
+.btn-create:active { transform: translateY(1px); box-shadow: 0 1px 2px rgba(28, 33, 48, .3); }
+.btn-create:disabled, .btn-create:disabled:hover {
+  background: var(--create-grad); opacity: .45; filter: none; cursor: not-allowed; box-shadow: none; transform: none;
+}
+
+/* Badges (Pills) */
+.badge {
+  display: inline-block; vertical-align: 2px; margin-left: 6px;
+  font-size: 11px; font-weight: 600; letter-spacing: 0;
+  color: var(--accent); background: var(--accent-soft); border-radius: 99px; padding: 2px 10px;
+}
+.badge.muted { color: var(--muted); background: var(--line2); }
+.badge.expired { color: var(--danger); background: var(--danger-soft); }
+.badge.active { color: var(--success); background: var(--success-soft); }
+
+.empty {
+  border: 1px dashed #c9cec6; border-radius: var(--radius);
+  padding: 32px; text-align: center; color: var(--muted2);
+}
+
+/* Detailseite */
+.crumbs { margin: 0; }
+.crumbs a { color: var(--muted2); text-decoration: none; font-weight: 500; font-size: 13px; }
+.crumbs a:hover { color: var(--accent); }
+.detail-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.detail-head h1 .accent { color: var(--accent); }
+.detail-grid { display: grid; grid-template-columns: 220px 1fr; gap: 22px; }
+.qrbox {
+  margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 18px; text-align: center; align-self: start; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; gap: 12px;
+}
+.qrbox img { display: block; width: 100%; height: auto; }
+.qrbox .dl { display: flex; gap: 8px; }
+.qrbox .dl .btn { flex: 1; text-align: center; padding: 8px 0; }
+/* Statistik-Kopf: Titel + Kennzahlen links, Zeitraum-Chips rechts */
+.stat-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.stat-row { display: flex; align-items: baseline; gap: 24px; row-gap: 6px; flex-wrap: wrap; }
+.stat-row .num { white-space: nowrap; }
+.stat-row .num b { font-size: 22px; letter-spacing: -.02em; }
+.stat-row .num span { font-size: 13px; color: var(--muted2); }
+/* Chip-Buttons (Zeitraum- und Seitengröße-Auswahl teilen sich dieses
+   Grundmuster, siehe .page-size-group/.page-size-btn weiter unten). */
+.range-group, .page-size-group { display: flex; align-items: center; gap: 3px; background: var(--bg); border-radius: var(--radius-sm); padding: 3px; }
+.range-btn, .page-size-btn {
+  background: transparent; border: 1px solid transparent; color: var(--muted);
+  font-size: 13px; font-weight: 500; font-family: inherit; cursor: pointer;
+  height: 30px; padding: 0 12px; border-radius: var(--radius-xs); text-align: center;
+}
+.range-btn { min-width: 52px; }
+.range-btn:hover, .page-size-btn:hover { background: transparent; border-color: transparent; color: var(--ink); }
+.range-btn.active, .range-btn.active:hover,
+.page-size-btn.active, .page-size-btn.active:hover {
+  background: var(--surface); border-color: var(--line); color: var(--ink); font-weight: 600; box-shadow: var(--shadow);
+}
+
+/* Klicks-Liniendiagramm (Statistik-Bereich der Detailseite) */
+.chart-wrap { position: relative; margin-top: 18px; }
+.chart-svg { display: block; width: 100%; height: 190px; }
+.chart-grid { stroke: var(--line2); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-grid-base { stroke: var(--line); }
+.chart-area { fill: color-mix(in srgb, var(--accent), transparent 88%); }
+.chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.chart-hover { cursor: default; }
+.chart-hover-point {
+  position: absolute; z-index: 4; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--surface); border: 2px solid var(--accent); box-sizing: border-box;
+  transform: translate(-50%, -50%); pointer-events: none;
+  opacity: 0; transition: opacity .1s ease;
+}
+.chart-hover-point.visible { opacity: 1; }
+.chart-label {
+  position: absolute; left: 8px; font-size: 11px; color: var(--muted2);
+  background: rgba(255, 255, 255, .8); padding: 0 3px;
+}
+/* Absolut positioniert statt Flex-space-between: jedes Label sitzt an der
+   Prozent-Position seines echten Datenpunkt-Index (siehe xLabelsHtml() in
+   views.js), damit es exakt unter dem zugehörigen Kurvenpunkt steht. */
+.chart-x-labels { position: relative; height: 14px; margin-top: 4px; }
+.chart-x-labels span { position: absolute; top: 0; transform: translateX(-50%); font-size: 11.5px; color: var(--muted2); white-space: nowrap; }
+
+/* Chart-Tooltip: folgt der Punktposition (siehe app.js showTooltip) */
+.chart-tooltip {
+  position: absolute; z-index: 5; pointer-events: none;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xs);
+  box-shadow: var(--shadow-hover); padding: 8px 10px; white-space: nowrap;
+  transform: translate(-50%, calc(-100% - 10px));
+  opacity: 0; transition: opacity .1s ease;
+}
+.chart-tooltip.visible { opacity: 1; }
+.chart-tooltip-title { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
+.chart-tooltip-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
+.chart-tooltip-row b { color: var(--ink); margin-left: 10px; }
+.chart-tooltip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
+
+/* Verteilungen (Referrer/Geräte/Browser) */
+.split { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.split li { font-size: 12.5px; }
+.split .row { display: flex; justify-content: space-between; }
+.split .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split .val { color: var(--muted2); white-space: nowrap; }
+.split .meter { height: 6px; background: var(--line2); border-radius: 999px; margin-top: 4px; overflow: hidden; }
+.split .meter span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+
+/* Tabelle */
+.tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; font-family: var(--sans); color: var(--ink); }
+.tbl th { text-align: left; color: var(--muted2); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line); }
+.tbl td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line2); }
+.tbl td.cell-sub { color: var(--muted2); white-space: nowrap; }
+
+/* Link-Tabelle (Meine Links) */
+.table-card { padding: 0; overflow: hidden; }
+.table-toolbar { display: flex; align-items: center; gap: 16px; padding: 18px 22px; flex-wrap: wrap; }
+.table-toolbar .search-input { max-width: 260px; margin-right: auto; }
+.table-scroll { overflow-x: auto; border-top: 1px solid var(--line); }
+.linktable { width: 100%; border-collapse: collapse; font-family: var(--sans); font-size: 13.5px; color: var(--ink); }
+.linktable th {
+  text-align: left; white-space: nowrap; color: var(--muted2); font-weight: 600; font-size: 11.5px;
+  text-transform: uppercase; letter-spacing: .06em; padding: 11px 14px; background: var(--bg);
+  border-bottom: 1px solid var(--line2);
+}
+.linktable td { padding: 10px 14px; vertical-align: middle; border-bottom: 1px solid var(--line2); }
+.linktable th:last-child, .linktable td:last-child { text-align: right; padding-right: 24px; }
+.linktable th:first-child, .linktable td:first-child { padding-left: 24px; }
+
+.page-size-btn { min-width: 40px; padding: 0 11px; }
+.pagination-arrows { display: flex; align-items: center; gap: 8px; }
+.pagination-arrow {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; min-width: 0; padding: 0; flex: none;
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); color: var(--muted); cursor: pointer;
+}
+.pagination-arrow:hover { background: var(--bg); border-color: var(--line); color: var(--ink); }
+.pagination-arrow:disabled, .pagination-arrow:disabled:hover { opacity: .4; cursor: not-allowed; background: var(--surface); border-color: var(--line); color: var(--muted); }
+.linktable tbody tr:last-child td { border-bottom: none; }
+.linktable tbody tr:hover { background: #f7f8fb; }
+.linktable .nowrap { white-space: nowrap; }
+.linktable .url-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linktable .url-cell a { color: var(--muted); text-decoration: none; }
+.linktable .url-cell a:hover { color: var(--accent); }
+.linktable .desc-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linktable .slug { font-weight: 600; color: var(--accent); text-decoration: none; }
+.linktable .slug:hover { text-decoration: underline; }
+.linktable .badge { margin-left: 0; vertical-align: 1px; }
+.copy-icon-btn {
+  all: unset; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; margin-right: 2px; border-radius: var(--radius-xs);
+  color: var(--muted3); cursor: pointer; vertical-align: middle;
+}
+.copy-icon-btn:hover { background: var(--line2); color: var(--accent); }
+.copy-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.copy-icon { width: 15px; height: 15px; }
+
+/* Statischer QR-Code Generator: nutzt .qrbox/.detail-grid aus der Detailseite
+   (siehe linkDetail) – Vorschau links, Formular rechts. Anders als dort steckt
+   der QR-Code als eingebettetes <svg> direkt in der qrbox statt als <img>. */
+.qrbox svg { display: block; width: 100%; height: auto; }
+.qrbox .dl form { flex: 1; margin: 0; }
+.qrbox .dl form .btn { width: 100%; }
+.color-pills { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.color-pills .label-inline { font-size: 12.5px; font-weight: 600; color: var(--label); }
+.color-pills label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12.5px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+/* Checkbox wie die Radios bei Sichtbarkeit (.radio-row input[type=radio]):
+   feste 16px-Größe statt Browser-Standard, damit sie zur restlichen Zeile passt. */
+.color-pills input[type=checkbox] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
+/* appearance:none entfernt den nativen Rahmen/Look des Browsers um die
+   Farbfläche (sonst "Box-in-Box"-Effekt trotz eigenem Rahmen/Radius außen) –
+   das Popup zum Farbwählen selbst bleibt nativ, lässt sich nicht stylen. */
+.color-pills input[type=color] {
+  appearance: none; -webkit-appearance: none;
+  width: 30px; height: 30px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius-xs); cursor: pointer; background: #fff;
+}
+.color-pills input[type=color]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 5px; overflow: hidden; }
+.color-pills input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
+.color-pills input[type=color]::-moz-color-swatch { border: none; border-radius: 5px; }
+.color-pills input[type=color]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Hintergrundfarbe spielt keine Rolle mehr, wenn "transparent" angehakt ist –
+   Swatch bleibt bedienbar (kein disabled, einfacher als mit JS synchron zu
+   halten), wirkt aber sichtbar irrelevant. */
+.color-pills:has(input[name=light_transparent]:checked) input[name=light] { opacity: .35; }
+/* Schachbrett-Hintergrund hinter der QR-Vorschau, wenn deren eigener
+   Hintergrund transparent ist – sonst sieht "transparent" auf der weißen
+   .qrbox-Karte optisch identisch zu "weiß" aus. */
+.qr-preview-checker {
+  background-image: conic-gradient(var(--line2) 90deg, transparent 90deg 180deg, var(--line2) 180deg 270deg, transparent 270deg);
+  background-size: 16px 16px;
+  border-radius: var(--radius-xs);
+}
+
+/* Statischer QR-Code Generator: Typ-Tabs (URL/Text/WLAN/EPC) – CSS-only per
+   :has() auf .qr-form, siehe qrTypeTabs()/qrTypePanels() in views.js. Optik
+   angelehnt an .range-group/.range-btn (Segment-Gruppe), Struktur (verstecktes
+   Radio + Label/Span) damit es auch ohne JS klappt. */
+.qr-type-tabs { display: flex; align-items: center; gap: 3px; background: var(--bg); border-radius: var(--radius-sm); padding: 3px; width: fit-content; flex-wrap: wrap; }
+.qr-type-tabs input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.qr-type-tabs label { margin: 0; cursor: pointer; }
+.qr-type-tabs span { display: inline-block; height: 30px; line-height: 30px; padding: 0 14px; font-size: 13px; font-weight: 500; color: var(--muted); border-radius: var(--radius-xs); }
+.qr-type-tabs label:has(input:checked) span { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow); }
+.qr-type-tabs label:focus-within span { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* flex-direction/gap wirken erst, sobald ein Panel sichtbar wird (unten) –
+   sorgt z. B. beim EPC-Panel für denselben 20px-Zeilenabstand zwischen seinen
+   zwei .grid-form-Zeilen wie im Formular von "Erstellen". */
+.qr-type-panel { display: none; flex-direction: column; gap: 20px; }
+.qr-form:has(#qt-url:checked) .qr-type-panel[data-panel="url"],
+.qr-form:has(#qt-text:checked) .qr-type-panel[data-panel="text"],
+.qr-form:has(#qt-wlan:checked) .qr-type-panel[data-panel="wlan"],
+.qr-form:has(#qt-epc:checked) .qr-type-panel[data-panel="epc"] { display: flex; }
+
+/* Meldungen & Fuß */
+.flash { margin: 20px 32px 0; padding: 11px 20px; border-radius: var(--radius-xs); font-size: 13.5px; font-weight: 500; }
+.flash.ok { background: var(--accent-soft); border: 1px solid var(--accent-soft-border); color: #16307e; }
+.flash.error { background: var(--danger-soft); border: 1px solid var(--danger-soft-border); color: var(--danger); }
+.card .flash { margin: 0 0 12px; }
+
+/* Toast: die Redirect-Meldung aus layout() (nach Speichern/Löschen etc.) –
+   schwebt oben rechts statt den Textfluss zu verschieben, auf Höhe der
+   "← Zurück"-Zeile der Detailseite. Eingebettete Inline-Fehler (Login,
+   statischer QR-Code Generator) bleiben bewusst bei der einfachen .flash-Klasse. */
+.flash.toast {
+  position: fixed; top: 30px; right: 32px; z-index: 80;
+  margin: 0; max-width: 360px; box-shadow: var(--shadow-hover);
+  animation: toast-in .2s ease, toast-out .2s ease 4.5s forwards;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes toast-out { to { opacity: 0; transform: translateY(-8px); } }
+@media (max-width: 760px) {
+  .flash.toast { top: 20px; right: 20px; left: 20px; max-width: none; }
+}
+
+/* Login */
+.login-shell {
+  flex: 1; display: grid; place-items: center; padding: 40px 24px;
+  background: linear-gradient(180deg, var(--bg) 0%, var(--accent-soft) 100%);
+}
+
+.login-card {
+  width: 100%; max-width: 340px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  box-shadow: var(--shadow), 0 12px 32px rgba(14, 18, 32, .08);
+  padding: 40px 32px 32px; display: flex; flex-direction: column; align-items: center;
+  text-align: center; color: var(--ink);
+}
+.login-brand { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 28px; }
+.login-card h2 { font-size: 18px; font-weight: 600; color: var(--ink); margin: 0 0 6px; text-transform: none; letter-spacing: 0; }
+.login-card h3 { font-size: 13.5px; font-weight: 400; color: var(--muted2); margin: 0 0 32px; text-transform: none; letter-spacing: 0; }
+.login-card .flash.error { width: 100%; margin: 0 0 16px; }
+
+.login-form { display: grid; gap: 16px; width: 100%; margin: 0 0 22px; text-align: left; }
+.login-form label { font-size: 12.5px; font-weight: 600; color: var(--label); margin-bottom: 6px; }
+.login-form input {
+  width: 100%; height: 44px; padding: 0 14px; font: inherit; font-size: 14.5px;
+  background: #fff; color: var(--ink); border: 1px solid #dde1ea; border-radius: var(--radius-sm);
+  outline: none; transition: border-color .2s;
+}
+.login-form button {
+  height: 44px; margin-top: 6px; padding: 0 20px; font: inherit; font-size: 14.5px; font-weight: 600;
+  border: 1px solid var(--accent); border-radius: var(--radius-sm); cursor: pointer;
+  color: var(--accent-ink); background: var(--accent);
+}
+.login-form button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+/* SSO-Login (Authentik/OIDC, siehe loginPage() in views.js) – eigener,
+   zurückhaltender Button oberhalb des Passwort-Formulars, damit der
+   Standardweg (Passwort) optisch nicht verdrängt wird. */
+.login-sso-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 44px; margin: 0 0 20px; font: inherit; font-size: 14.5px; font-weight: 600;
+  color: var(--label); background: transparent; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  text-decoration: none; cursor: pointer;
+}
+.login-sso-btn:hover { border-color: var(--accent); color: var(--accent); }
+.login-divider { display: flex; align-items: center; gap: 10px; margin: 0 0 20px; font-size: 12px; color: var(--muted3); }
+.login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--line2); }
+
+.search-input { max-width: 220px; padding: 6px 12px; }
+
+/* Danger / Löschen mit Bestätigung */
+.danger-confirm { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.danger-confirm .copy { flex: 1; min-width: 220px; }
+.danger-confirm .copy b { font-size: 14px; color: var(--danger); display: block; }
+.danger-confirm .copy p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted3); }
+.danger-confirm form { display: flex; gap: 10px; align-items: center; }
+.danger-confirm input[type=text] { width: 180px; }
+
+/* Bestätigungs-Modal (natives <dialog>, siehe app.js/layout() in views.js) –
+   eigenes Styling statt Browser-Standard, plus abgedunkelter Hintergrund. */
+.confirm-dialog {
+  border: none; border-radius: var(--radius); padding: 24px;
+  box-shadow: var(--shadow-hover); max-width: 420px; width: calc(100vw - 32px);
+  /* Deckelt den Dialog auf die Viewport-Höhe statt unbegrenzt zu wachsen, für
+     sehr langen Bestätigungstext auf kleinen Bildschirmen. Wirkt sich sonst
+     nirgends aus: ohne überlaufenden Inhalt bleibt der Dialog exakt so
+     kompakt wie bisher. (Löst NICHT das Dropdown-Überlauf-Problem beim
+     "Links übertragen an"-Select – ein <dialog> im Top-Layer bezieht dessen
+     absolut positioniertes Menü nicht in seinen eigenen Scroll-Bereich ein;
+     das übernimmt stattdessen positionMenu() in app.js.) */
+  max-height: calc(100vh - 64px); overflow-y: auto;
+  background: var(--surface); color: var(--ink);
+}
+.confirm-dialog::backdrop { background: rgba(14, 18, 32, .45); }
+.confirm-dialog h3 { font-size: 16px; font-weight: 700; color: var(--ink); text-transform: none; letter-spacing: 0; margin: 0 0 10px; }
+.confirm-dialog-text { margin: 0 0 20px; font-size: 13.5px; color: var(--muted); line-height: 1.55; }
+.confirm-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+@media (max-width: 760px) {
+  .cols, .detail-grid { grid-template-columns: 1fr; }
+  /* Kein Mobile-Nav-Mechanismus (mehr) – Sidebar ist unter 760px bewusst
+     ausgeblendet, bis dafür eine eigene Lösung (z. B. Burger-Menü) ansteht. */
+  .sidebar { display: none; }
+  main { padding: 24px 20px 40px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .split .meter span { transition: width 0.4s ease; }
+}

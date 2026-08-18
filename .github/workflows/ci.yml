@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Syntax-check all source files
+        run: |
+          for f in src/*.js; do
+            echo "Checking $f"
+            node --check "$f"
+          done
+
+      # A plain syntax check misses runtime errors (broken require()s,
+      # failed DB migrations on startup, etc.) – so also actually start
+      # the server and poll /healthz.
+      - name: Boot smoke test (server starts, /healthz responds)
+        env:
+          ADMIN_USER: admin
+          ADMIN_PASSWORD: ci-smoke-test-password
+          BASE_URL: https://example.com
+          PORT: 3000
+          DATA_DIR: ${{ runner.temp }}/snar-ci-data
+        run: |
+          node src/server.js &
+          SERVER_PID=$!
+          echo "Waiting for /healthz..."
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:3000/healthz > /dev/null; then
+              echo "Server is reachable."
+              kill "$SERVER_PID"
+              exit 0
+            fi
+            sleep 0.5
+          done
+          echo "Server did not respond in time."
+          kill "$SERVER_PID" 2>/dev/null || true
+          exit 1

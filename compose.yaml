@@ -1,0 +1,40 @@
+services:
+  snar:
+    build: .
+    container_name: snar
+    restart: unless-stopped
+    cpus: 0.5
+    # Docker's own json-file logs grow without bound otherwise – over years
+    # of continuous operation that becomes a slow-creeping disk problem.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "3000:3000"
+    environment:
+      # Timezone for stats: day/hour boundaries in the click charts cut at
+      # this zone (clicks themselves are stored in UTC).
+      TZ: "Europe/Berlin"
+      # Only used on the very first start: creates the first admin account.
+      # Real values come from a local .env file (see .env.example) – NEVER
+      # put real credentials directly here, this file is meant for the repo.
+      ADMIN_USER: "${ADMIN_USER:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Bitte ADMIN_PASSWORD in einer .env-Datei setzen, siehe .env.example}"
+      # Only used on the very first start: initial short-domain(s), ends up
+      # in the QR codes! Manageable afterwards under Domains (/app/domains)
+      # – this variable is then ignored. Multiple domains: comma-separated.
+      BASE_URL: "${BASE_URL:-https://example.com}"
+      # DOMAINS: "https://example.com,https://kurz.example.com"
+      # Optional: SSO login via OIDC (e.g. Authentik) in addition to
+      # password login. Only active once all three variables are set.
+      # Register the redirect URI with the provider: <domain>/login/sso/callback
+      # OIDC_ISSUER_URL: "${OIDC_ISSUER_URL:-}"
+      # OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      # OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
+    volumes:
+      - snar-data:/data
+
+volumes:
+  snar-data:
