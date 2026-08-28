@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS users (
   token_version INTEGER NOT NULL DEFAULT 0,      -- part of the session signature; +1 invalidates old sessions
   created_at    TEXT NOT NULL DEFAULT (datetime('now')),
   last_login_at TEXT,
-  sso_subject   TEXT  -- Authentik's stable "sub" claim; NULL = local account. Uniqueness via idx_users_sso_subject (SQLite doesn't allow UNIQUE directly on ALTER TABLE ADD COLUMN, see migration below)
+  sso_subject   TEXT  -- Authentik's stable "sub" claim; NULL = local account. Uniqueness via idx_users_sso_subject (SQLite doesn't allow an inline UNIQUE that still permits multiple NULLs)
 );
 
 CREATE TABLE IF NOT EXISTS links (
@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS links (
   visibility TEXT NOT NULL DEFAULT 'privat',     -- 'privat' | 'org'
   owner_id   INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  domain     TEXT NOT NULL DEFAULT '',           -- e.g. https://example.com; backfilled per-request if empty (see server.js)
+  expires_at TEXT                                -- NULL = never expires; same format as other timestamps ('YYYY-MM-DD HH:MM:SS', UTC)
 );
 
 CREATE TABLE IF NOT EXISTS clicks (
@@ -48,6 +50,10 @@ CREATE INDEX IF NOT EXISTS idx_clicks_link_ts ON clicks(link_id, ts);
 -- without an index this would be a full table scan over links on every request.
 CREATE INDEX IF NOT EXISTS idx_links_owner ON links(owner_id);
 CREATE INDEX IF NOT EXISTS idx_links_visibility ON links(visibility);
+-- SSO login (Authentik/OIDC, see server.js): a separate unique index rather
+-- than an inline UNIQUE on the column – SQLite still allows any number of
+-- NULLs through it (local accounts without an SSO link).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sso_subject ON users(sso_subject);
 
 -- Logs every target-URL change (who, when, old -> new). The target URL is a
 -- link's most security-critical field (redirect to phishing/malware) and,
@@ -76,48 +82,6 @@ CREATE TABLE IF NOT EXISTS domains (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 `);
-
-{
-  const cols = db.prepare(`PRAGMA table_info(links)`).all().map(c => c.name);
-  if (!cols.includes('visibility')) {
-    db.exec(`ALTER TABLE links ADD COLUMN visibility TEXT NOT NULL DEFAULT 'privat'`);
-  }
-  if (!cols.includes('owner_id')) {
-    db.exec(`ALTER TABLE links ADD COLUMN owner_id INTEGER REFERENCES users(id)`);
-  }
-  if (!cols.includes('domain')) {
-    db.exec(`ALTER TABLE links ADD COLUMN domain TEXT NOT NULL DEFAULT ''`);
-  }
-  if (!cols.includes('expires_at')) {
-    // NULL = never expires. Same format as other timestamps: 'YYYY-MM-DD HH:MM:SS', UTC.
-    db.exec(`ALTER TABLE links ADD COLUMN expires_at TEXT`);
-  }
-  // old "oeffentlich" (public) links become org links in the vault
-  db.exec(`UPDATE links SET visibility = 'org' WHERE visibility = 'oeffentlich'`);
-
-  // Session invalidation on password change (existing databases)
-  const userCols = db.prepare(`PRAGMA table_info(users)`).all().map(c => c.name);
-  if (!userCols.includes('token_version')) {
-    db.exec(`ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0`);
-  }
-  if (!userCols.includes('last_login_at')) {
-    db.exec(`ALTER TABLE users ADD COLUMN last_login_at TEXT`);
-  }
-  // SSO login (Authentik/OIDC, see server.js) – separate unique index instead
-  // of an inline UNIQUE on the column definition, because SQLite doesn't
-  // allow "ALTER TABLE ADD COLUMN ... UNIQUE". A unique index still allows
-  // any number of NULLs (local accounts without an SSO link).
-  if (!userCols.includes('sso_subject')) {
-    db.exec(`ALTER TABLE users ADD COLUMN sso_subject TEXT`);
-  }
-  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sso_subject ON users(sso_subject)`);
-
-  // "Set as default" for domains (existing databases)
-  const domainCols = db.prepare(`PRAGMA table_info(domains)`).all().map(c => c.name);
-  if (!domainCols.includes('sort_order')) {
-    db.exec(`ALTER TABLE domains ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`);
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Session secret (persisted so logins survive restarts)
@@ -334,4 +298,4 @@ function seedDomainsIfEmpty(origins) {
   }
 }
 
-module.exports = { db, stmts, createLink, getSessionSecret, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty };
+module.exports = { stmts, createLink, getSessionSecret, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty };

@@ -167,9 +167,9 @@ document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
     <div class="dt-time-row">
       <span class="dt-time-label">Uhrzeit</span>
       <div class="dt-time-inputs">
-        <input type="number" class="dt-hour" min="0" max="23">
+        <input type="number" class="dt-hour" min="0" max="23" aria-label="Stunde">
         <span class="dt-time-sep">:</span>
-        <input type="number" class="dt-minute" min="0" max="59">
+        <input type="number" class="dt-minute" min="0" max="59" aria-label="Minute">
       </div>
     </div>
     <div class="dt-panel-footer">
@@ -334,11 +334,20 @@ document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
 
 const COPY_CHECK_SVG = '<svg class="copy-icon" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="m10 13.6l5.9-5.9q.275-.275.7-.275t.7.275t.275.7t-.275.7l-6.6 6.6q-.3.3-.7.3t-.7-.3l-2.6-2.6q-.275-.275-.275-.7t.275-.7t.7-.275t.7.275z"/></svg>';
 
+const copyAnnouncer = document.getElementById('copy-announcer');
+
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-copy]');
   if (!btn) return;
   try {
     await navigator.clipboard.writeText(btn.dataset.copy);
+    // Icon-/Text-Tausch allein wird von Screenreadern nicht zuverlässig
+    // bemerkt (weder reine Icon-Swaps noch title-Änderungen lösen eine
+    // Ansage aus) – die eigentliche Bestätigung läuft über diese Live-Region.
+    if (copyAnnouncer) {
+      copyAnnouncer.textContent = 'Link kopiert';
+      setTimeout(() => { copyAnnouncer.textContent = ''; }, 1500);
+    }
     if (btn.classList.contains('copy-icon-btn')) {
       const oldHtml = btn.innerHTML;
       const oldTitle = btn.title;
@@ -478,12 +487,60 @@ document.querySelectorAll('[data-confirm-slug]').forEach((input) => {
   });
 });
 
+// Mobile sidebar: below the sidebar breakpoint (see style.css) the same
+// sidebar markup becomes an off-canvas overlay instead of vanishing
+// entirely, opened via the "Mehr" tab in the bottom nav (Account/Admin-
+// Einstellungen live here, the four primary destinations have their own
+// direct links in .bottom-nav now). Closes on a backdrop click or Escape;
+// a nav link click doesn't need its own handler – it's a full page load,
+// so the 'open' state never carries over anyway.
+const menuToggle = document.getElementById('bottom-nav-more');
+const sidebar = document.getElementById('sidebar');
+const sidebarBackdrop = document.getElementById('sidebar-backdrop');
+if (menuToggle && sidebar && sidebarBackdrop) {
+  // Below the breakpoint, a closed sidebar is only moved off-screen
+  // (transform) – still fully focusable otherwise, so keyboard/screen-reader
+  // users would tab straight into invisible nav links. inert removes it from
+  // the tab order/AT tree whenever it's actually hidden (closed + mobile).
+  const mobileNavQuery = window.matchMedia('(max-width: 760px)');
+  const syncInert = () => { sidebar.inert = mobileNavQuery.matches && !sidebar.classList.contains('open'); };
+  const closeSidebar = ({ restoreFocus = false } = {}) => {
+    sidebar.classList.remove('open');
+    sidebarBackdrop.classList.remove('open');
+    document.body.classList.remove('sidebar-open-lock');
+    menuToggle.setAttribute('aria-expanded', 'false');
+    syncInert();
+    if (restoreFocus) menuToggle.focus();
+  };
+  menuToggle.addEventListener('click', () => {
+    const open = sidebar.classList.toggle('open');
+    sidebarBackdrop.classList.toggle('open', open);
+    document.body.classList.toggle('sidebar-open-lock', open);
+    menuToggle.setAttribute('aria-expanded', String(open));
+    syncInert();
+    if (open) sidebar.querySelector('.account-trigger, .navlink')?.focus();
+  });
+  sidebarBackdrop.addEventListener('click', () => closeSidebar({ restoreFocus: true }));
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && sidebar.classList.contains('open')) closeSidebar({ restoreFocus: true });
+  });
+  mobileNavQuery.addEventListener('change', syncInert);
+  syncInert();
+}
+
 // Nav accordion (e.g. "Admin-Einstellungen"): expand/collapse on click.
+// Collapsed content only shrinks visually via max-height (see style.css) –
+// its <a> links would otherwise stay reachable by Tab/AT while invisible,
+// so `inert` additionally pulls them out of the tab order/AT tree, same
+// technique as the mobile sidebar further below.
 document.querySelectorAll('.nav-accordion > .accordion-toggle').forEach((btn) => {
+  const group = btn.parentElement;
+  const content = group.querySelector('.accordion-content');
+  content.inert = !group.classList.contains('open');
   btn.addEventListener('click', () => {
-    const group = btn.parentElement;
     const open = group.classList.toggle('open');
     btn.setAttribute('aria-expanded', String(open));
+    content.inert = !open;
   });
 });
 
@@ -517,8 +574,30 @@ if (linkRows.length) {
   const pageSizeBtns = document.querySelectorAll('.page-size-btn');
   const prevBtn = document.getElementById('links-prev');
   const nextBtn = document.getElementById('links-next');
-  let pageSize = Number(document.querySelector('.page-size-btn.active')?.dataset.pageSize) || 20;
-  let page = 1;
+  const DEFAULT_PAGE_SIZE = Number(document.querySelector('.page-size-btn.active')?.dataset.pageSize) || 20;
+
+  // Initial state comes from the URL (?q=&page=&size=), so a reload or a
+  // shared link lands back on the same search/page instead of always
+  // resetting to the top – restored once here, kept in sync via
+  // history.replaceState() in render() below (no new history entry per
+  // keystroke, that would make the back button useless).
+  const initialParams = new URLSearchParams(location.search);
+  let pageSize = Number(initialParams.get('size'));
+  if (![10, 20, 50].includes(pageSize)) pageSize = DEFAULT_PAGE_SIZE;
+  let page = Math.max(1, parseInt(initialParams.get('page'), 10) || 1);
+  const initialQ = initialParams.get('q') || '';
+  if (linksSearch && initialQ) linksSearch.value = initialQ;
+  pageSizeBtns.forEach((b) => b.classList.toggle('active', Number(b.dataset.pageSize) === pageSize));
+
+  function syncUrl() {
+    const params = new URLSearchParams(location.search);
+    const q = linksSearch ? linksSearch.value.trim() : '';
+    q ? params.set('q', q) : params.delete('q');
+    page > 1 ? params.set('page', String(page)) : params.delete('page');
+    pageSize !== DEFAULT_PAGE_SIZE ? params.set('size', String(pageSize)) : params.delete('size');
+    const qs = params.toString();
+    history.replaceState(null, '', location.pathname + (qs ? `?${qs}` : ''));
+  }
 
   function render() {
     const q = linksSearch ? linksSearch.value.trim().toLowerCase() : '';
@@ -531,6 +610,7 @@ if (linkRows.length) {
     });
     if (prevBtn) prevBtn.disabled = page <= 1;
     if (nextBtn) nextBtn.disabled = page >= totalPages;
+    syncUrl();
   }
 
   linksSearch?.addEventListener('input', () => { page = 1; render(); });
@@ -550,17 +630,14 @@ if (linkRows.length) {
 
 // "Erstellen" button: stays fully usable without JS (target-URL already
 // has `required`), but is additionally disabled via JS until a target URL
-// has been entered, with a hint text next to it.
+// has been entered, with the reason in its title tooltip.
 const createBtn = document.getElementById('create-btn');
-const createHint = document.getElementById('create-hint');
 const targetInput = document.getElementById('target');
 if (createBtn && targetInput) {
   const syncCreateState = () => {
     const empty = targetInput.value.trim() === '';
     createBtn.disabled = empty;
     createBtn.title = empty ? 'Bitte zuerst eine Ziel-URL eingeben' : 'Kurzlink erstellen';
-    // display:none by default via CSS – without JS the hint never appears at all
-    if (createHint) createHint.style.display = empty ? 'inline' : 'none';
   };
   targetInput.addEventListener('input', syncCreateState);
   syncCreateState();
@@ -573,6 +650,7 @@ if (createBtn && targetInput) {
 const rangeGroup = document.getElementById('stats-range-group');
 if (rangeGroup) {
   const ranges = JSON.parse(rangeGroup.dataset.ranges);
+  const numberFormat = new Intl.NumberFormat('de-DE');
   const CHART_W = 800, CHART_TOP = 15, CHART_BASE = 185;
   const areaPath = document.getElementById('chart-area');
   const linePath = document.getElementById('chart-line');
@@ -597,14 +675,14 @@ if (rangeGroup) {
     const line = 'M' + points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' L');
     areaPath.setAttribute('d', `${line} L${CHART_W},${CHART_BASE} L0,${CHART_BASE} Z`);
     linePath.setAttribute('d', line);
-    labelMax.textContent = max;
-    labelMid.textContent = Math.floor(max / 2); // see chartGeometry() in views.js
+    labelMax.textContent = numberFormat.format(max);
+    labelMid.textContent = numberFormat.format(Math.floor(max / 2)); // see chartGeometry() in views.js
     // Positioned at the real index instead of evenly spread – see xLabelsHtml() in views.js.
     xLabels.innerHTML = r.labels.map(({ i, text }) => {
       const pct = n > 1 ? (i / (n - 1)) * 100 : 50;
       return `<span style="left:${pct.toFixed(2)}%">${text}</span>`;
     }).join('');
-    totalRange.textContent = r.total;
+    totalRange.textContent = numberFormat.format(r.total);
     rangeLabel.textContent = r.label;
 
     // Rebuild the hover areas – see chartHoverBands() in views.js. The
@@ -663,3 +741,40 @@ if (rangeGroup) {
     });
   });
 }
+
+// Move focus to a validation error on load. Prefers the specific invalid
+// field (dashboard/linkDetail/usersPage/domainsPage – see views.js) so
+// keyboard/screen-reader users land exactly where the fix is needed; falls
+// back to the generic .flash.error banner (login, static QR generator, or
+// the redirect toast from flashRedirect in server.js) when no field is
+// singled out.
+const invalidField = document.querySelector('input.invalid, textarea.invalid');
+if (invalidField) {
+  invalidField.focus();
+} else {
+  const errorFlash = document.querySelector('.flash.error');
+  if (errorFlash) {
+    errorFlash.setAttribute('tabindex', '-1');
+    errorFlash.focus();
+  }
+}
+
+// Warn before leaving a form with unsaved changes (link edit + password
+// change – the two places where navigating away actually loses meaningful
+// input, unlike the empty "create" forms elsewhere). Compares serialized
+// form state at load vs. right before unload; the submitting flag avoids
+// warning on the form's own submit navigation.
+function guardUnsavedChanges(form) {
+  if (!form) return;
+  const snapshot = () => new URLSearchParams(new FormData(form)).toString();
+  const initial = snapshot();
+  let submitting = false;
+  form.addEventListener('submit', () => { submitting = true; });
+  window.addEventListener('beforeunload', (e) => {
+    if (submitting || snapshot() === initial) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+}
+guardUnsavedChanges(document.getElementById('edit-form'));
+guardUnsavedChanges(document.getElementById('password-form'));

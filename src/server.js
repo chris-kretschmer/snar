@@ -689,15 +689,30 @@ app.get('/app', requireAuth, (req, res) => {
 app.post('/app/links', requireAuth, (req, res) => {
   const { targetUrl, title, visibility, domain, expiresAt } = readLinkFields(req);
   const slug = String(req.body.slug || '').trim();
-  if (!isHttpUrl(targetUrl)) return flashRedirect(res, '/app', 'err', 'Bitte eine gültige http(s)-URL angeben.');
+  // Re-renders the create form directly (like POST /login, POST /app/qr)
+  // instead of redirecting on failure, so the entered values survive and
+  // the offending field can be highlighted – a redirect+flash would lose
+  // everything the user just typed.
+  const rerenderDashboard = (error, errorField) => {
+    res.send(views.dashboard({
+      links: stmts.linksByOwner.all(req.user.id), user: req.user, flash: flashFromQuery(req), domains: getDomains(),
+      shortUrl: (l) => shortUrl(l, req),
+      error, errorField,
+      values: { target_url: String(req.body.target_url || ''), slug, title, domain, expires_at: String(req.body.expires_at || ''), visibility },
+    }));
+  };
+  if (!isHttpUrl(targetUrl)) return rerenderDashboard('Bitte eine gültige http(s)-URL angeben.', 'target_url');
   if (slug && (!/^[A-Za-z0-9\-_]{1,64}$/.test(slug) || RESERVED.has(slug.toLowerCase()))) {
-    return flashRedirect(res, '/app', 'err', 'Slug ungültig oder reserviert.');
+    return rerenderDashboard('Slug ungültig oder reserviert.', 'slug');
   }
   try {
     const link = createLink({ slug, targetUrl, title, visibility, ownerId: req.user.id, domain, expiresAt });
     res.redirect(`/app/links/${link.id}`);
   } catch (e) {
-    flashRedirect(res, '/app', 'err', e.code === 'SLUG_TAKEN' ? 'Dieser Slug ist bereits vergeben.' : 'Link konnte nicht angelegt werden.');
+    rerenderDashboard(
+      e.code === 'SLUG_TAKEN' ? 'Dieser Slug ist bereits vergeben.' : 'Link konnte nicht angelegt werden.',
+      e.code === 'SLUG_TAKEN' ? 'slug' : null,
+    );
   }
 });
 
@@ -710,33 +725,48 @@ function loadOwnLink(req, res, next) {
   next();
 }
 
-app.get('/app/links/:id', requireAuth, loadOwnLink, (req, res) => {
-  const l = req.link;
+// Shared by the GET route and the POST .../update failure path (see below)
+// – re-rendering on a validation error needs the exact same stats/audit
+// data as a normal page load, so this avoids computing it twice. `overrides`
+// carries the validation-error extras (error/errorField/values) on the
+// failure path; the plain GET call omits it and gets the normal DB-backed render.
+function renderLinkDetail(req, res, link, overrides = {}) {
   const stats = {
-    total: stmts.clicksTotal.get(l.id).n,
-    ranges: linkStatsRanges(l.id, l.created_at),
-    referrers: stmts.topReferrers.all(l.id),
-    devices: stmts.deviceSplit.all(l.id),
-    browsers: stmts.browserSplit.all(l.id),
-    recent: stmts.recentClicks.all(l.id),
+    total: stmts.clicksTotal.get(link.id).n,
+    ranges: linkStatsRanges(link.id, link.created_at),
+    referrers: stmts.topReferrers.all(link.id),
+    devices: stmts.deviceSplit.all(link.id),
+    browsers: stmts.browserSplit.all(link.id),
+    recent: stmts.recentClicks.all(link.id),
   };
-  const ownerOrAdmin = isOwnerOrAdmin(req.user, l);
+  const ownerOrAdmin = isOwnerOrAdmin(req.user, link);
   res.send(views.linkDetail({
-    link: l, origin: originFor(l, req), short: shortUrl(l, req), domains: getDomains(), stats,
-    expiresAtLocal: toDatetimeLocal(l.expires_at), expired: isExpired(l),
+    link, origin: originFor(link, req), short: shortUrl(link, req), domains: getDomains(), stats,
+    expiresAtLocal: toDatetimeLocal(link.expires_at), expired: isExpired(link),
     user: req.user, flash: flashFromQuery(req), page: pageFromReferer(req),
     // Drives both the visibility radios and the target-URL field (see
     // POST .../update below) – both have been restricted identically to
     // owner/admin since the pentest.
     canEditRestricted: ownerOrAdmin,
     canDelete: ownerOrAdmin,
-    audit: ownerOrAdmin ? stmts.linkAuditByLink.all(l.id) : [],
+    audit: ownerOrAdmin ? stmts.linkAuditByLink.all(link.id) : [],
+    ...overrides,
   }));
+}
+
+app.get('/app/links/:id', requireAuth, loadOwnLink, (req, res) => {
+  renderLinkDetail(req, res, req.link);
 });
 
 app.post('/app/links/:id/update', requireAuth, loadOwnLink, (req, res) => {
   const { targetUrl, title, visibility, domain, expiresAt } = readLinkFields(req);
-  if (!isHttpUrl(targetUrl)) return flashRedirect(res, `/app/links/${req.link.id}`, 'err', 'Ungültige URL – nichts geändert.');
+  if (!isHttpUrl(targetUrl)) {
+    return renderLinkDetail(req, res, req.link, {
+      error: 'Ungültige URL – nichts geändert.',
+      errorField: 'target_url',
+      values: { target_url: String(req.body.target_url || ''), title, domain, expiresAtLocal: String(req.body.expires_at || '') },
+    });
+  }
   const ownerOrAdmin = isOwnerOrAdmin(req.user, req.link);
   // The target URL is a link's most security-critical field (redirect to
   // phishing/malware) – unlike title/domain/expiry, it stays reserved for
@@ -864,14 +894,22 @@ app.post('/app/users', requireAuth, requireAdmin, (req, res) => {
   const username = String(req.body.username || '').trim();
   const password = String(req.body.password || '');
   const role = req.body.role === 'admin' ? 'admin' : 'member';
+  // Direct re-render on failure (see the comment at POST /app/links) –
+  // password is deliberately never echoed back, only username/role.
+  const rerenderUsers = (error, errorField) => {
+    res.send(views.usersPage({
+      users: stmts.listUsers.all(), user: req.user, flash: flashFromQuery(req),
+      error, errorField, values: { username, role },
+    }));
+  };
   if (!USERNAME_RE.test(username)) {
-    return flashRedirect(res, '/app/users', 'err', 'Nutzername ungültig (2–32 Zeichen, a–z, 0–9, -_.)');
+    return rerenderUsers('Nutzername ungültig (2–32 Zeichen, a–z, 0–9, -_.)', 'username');
   }
   if (password.length < 8) {
-    return flashRedirect(res, '/app/users', 'err', 'Passwort zu kurz (mind. 8 Zeichen).');
+    return rerenderUsers('Passwort zu kurz (mind. 8 Zeichen).', 'password');
   }
   if (stmts.userByName.get(username)) {
-    return flashRedirect(res, '/app/users', 'err', 'Nutzername bereits vergeben.');
+    return rerenderUsers('Nutzername bereits vergeben.', 'username');
   }
   stmts.insertUser.run(username, hashPassword(password), role);
   flashRedirect(res, '/app/users', 'ok', `"${username}" angelegt. Startpasswort sicher übermitteln – Wechsel unter Konto.`);
@@ -903,14 +941,22 @@ app.get('/app/domains', requireAuth, requireAdmin, (req, res) => {
 });
 
 app.post('/app/domains', requireAuth, requireAdmin, (req, res) => {
-  const originInput = ensureScheme(String(req.body.origin || '').trim());
+  const rawOrigin = String(req.body.origin || '').trim();
+  const originInput = ensureScheme(rawOrigin);
   let origin = '';
   try { origin = new URL(originInput).origin; } catch { /* stays empty -> error below */ }
+  // Direct re-render on failure (see the comment at POST /app/links).
+  const rerenderDomains = (error) => {
+    res.send(views.domainsPage({
+      domains: stmts.listDomains.all(), user: req.user, flash: flashFromQuery(req),
+      error, errorField: 'origin', values: { origin: rawOrigin },
+    }));
+  };
   if (!isHttpUrl(origin)) {
-    return flashRedirect(res, '/app/domains', 'err', 'Ungültige Domain – bitte mit http(s):// angeben.');
+    return rerenderDomains('Ungültige Domain – bitte mit http(s):// angeben.');
   }
   if (stmts.domainExists.get(origin)) {
-    return flashRedirect(res, '/app/domains', 'err', 'Diese Domain ist bereits konfiguriert.');
+    return rerenderDomains('Diese Domain ist bereits konfiguriert.');
   }
   stmts.insertDomain.run(origin);
   flashRedirect(res, '/app/domains', 'ok', `"${origin}" hinzugefügt.`);

@@ -20,6 +20,10 @@ function assetVersion(relPath) {
 }
 const CSS_URL = `/static/style.css?v=${assetVersion('style.css')}`;
 const APP_JS_URL = `/static/app.js?v=${assetVersion('app.js')}`;
+const FONT_URL = `/static/fonts/open-sans-latin.woff2?v=${assetVersion('fonts/open-sans-latin.woff2')}`;
+
+const numberFormat = new Intl.NumberFormat('de-DE');
+const fmtNum = (n) => numberFormat.format(n ?? 0);
 
 // style.css itself references the font file again via /static/* – it gets
 // the same hash cache-busting treatment as CSS/JS here, by replacing the
@@ -41,6 +45,19 @@ function esc(s) {
   return String(s ?? '')
     .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+}
+
+// Shared field-error rendering: `matchField` is which field a given <input>
+// represents, `errorField` is which field (if any) actually failed
+// validation on the last submit – only the matching input gets styled/
+// described, every other field on the same form stays untouched.
+function fieldInvalidAttrs(matchField, errorField, htmlId) {
+  if (matchField !== errorField) return '';
+  return ` class="invalid" aria-invalid="true" aria-describedby="${htmlId}-error"`;
+}
+function fieldErrorSpan(matchField, errorField, error, htmlId) {
+  if (matchField !== errorField) return '';
+  return `<span class="field-error" id="${htmlId}-error">${esc(error)}</span>`;
 }
 
 // DB timestamp ('YYYY-MM-DD HH:MM:SS', UTC) as a Date object
@@ -77,6 +94,8 @@ const ICON = {
   'chevron-left': `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14.5 5 9 12 14.5 19"/>`,
   'chevron-right': `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M9.5 5 15 12 9.5 19"/>`,
   copy: `<path fill="currentColor" d="M9 18q-.825 0-1.412-.587T7 16V4q0-.825.588-1.412T9 2h9q.825 0 1.413.588T20 4v12q0 .825-.587 1.413T18 18zm0-2h9V4H9zm-4 6q-.825 0-1.412-.587T3 20V7q0-.425.288-.712T4 6t.713.288T5 7v13h10q.425 0 .713.288T16 21t-.288.713T15 22zm4-6V4z"/>`,
+  menu: `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M4 6h16M4 12h16M4 18h16"/>`,
+  plus: `<path fill="currentColor" d="M11.288 20.713Q11 20.425 11 20v-7H4q-.425 0-.712-.288T3 12t.288-.712T4 11h7V4q0-.425.288-.712T12 3t.713.288T13 4v7h7q.425 0 .713.288T21 12t-.288.713T20 13h-7v7q0 .425-.288.713T12 21t-.712-.288"/>`,
 };
 function icon(key, cls = 'navicon') {
   return `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICON[key] || ''}</svg>`;
@@ -122,21 +141,65 @@ function navGroup(group, user, page) {
   return title + links;
 }
 
+// Mobile bottom navigation (<=760px, see .bottom-nav in style.css) – takes
+// over the primary-destinations role the hamburger+sidebar used to carry on
+// mobile. Shorter labels than the desktop sidenav (narrow 10px tabs).
+// "Mehr" opens the same sidebar overlay the old hamburger button did –
+// that's still where Account/Admin-Einstellungen live, see app.js.
+const BOTTOM_NAV_LEFT = [
+  { key: 'myvault', href: '/app/user-vault', label: 'Mein Tresor' },
+  { key: 'vault', href: '/app/org-vault', label: 'Team-Tresor' },
+];
+const BOTTOM_NAV_RIGHT = [
+  { key: 'qr', href: '/app/qr', label: 'QR-Code' },
+];
+function bottomNavItem(n, page) {
+  const active = page === n.key;
+  return `<a class="bottom-nav-item${active ? ' active' : ''}" href="${n.href}"${active ? ' aria-current="page"' : ''}>${icon(n.key, 'navicon')}<span>${esc(n.label)}</span></a>`;
+}
+function bottomNav(page, user) {
+  // Admins: Zahnrad + "Admin" statt generischem "Mehr" – der Tap-Grund ist
+  // für sie meist genau das (Icon matcht den Desktop-Accordion, siehe
+  // NAV_GROUPS – "Admin-Einstellungen" selbst bricht bei 10px in der engen
+  // Spalte auf drei Zeilen um, daher hier wie die anderen Tabs gekürzt).
+  // Mitglieder haben keine Admin-Seiten, für sie bleibt es der generische
+  // Sidebar-Zugang (Konto/Abmelden).
+  const isAdmin = user.role === 'admin';
+  const moreActive = page === 'users' || page === 'domains';
+  const moreIcon = isAdmin ? 'settings' : 'menu';
+  const moreLabel = isAdmin ? 'Admin' : 'Mehr';
+  return `<nav class="bottom-nav" aria-label="Hauptnavigation">
+    ${BOTTOM_NAV_LEFT.map(n => bottomNavItem(n, page)).join('')}
+    <a class="bottom-nav-create" href="/app" aria-label="Neuen Kurzlink erstellen"${page === 'dashboard' ? ' aria-current="page"' : ''}>
+      <span class="bottom-nav-create-circle">${icon('plus', 'bottom-nav-create-icon')}</span>
+    </a>
+    ${BOTTOM_NAV_RIGHT.map(n => bottomNavItem(n, page)).join('')}
+    <button type="button" class="bottom-nav-item${moreActive ? ' active' : ''}" id="bottom-nav-more" aria-haspopup="true" aria-controls="sidebar" aria-expanded="false">${icon(moreIcon, 'navicon')}<span>${esc(moreLabel)}</span></button>
+  </nav>`;
+}
+
 function layout({ title, body, user = null, flash = null, page = null }) {
   return `<!doctype html>
 <html lang="de">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
+<meta name="theme-color" content="#f7f8fa">
 <title>${esc(title)} · snar</title>
+<link rel="preload" href="${FONT_URL}" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="${CSS_URL}">
 </head>
 <body>
+${user ? `<a class="skip-link" href="#main-content">Zum Inhalt springen</a>
+<div class="mobile-topbar">
+  <a class="brand" href="/app"><span translate="no">snar</span></a>
+</div>` : ''}
 <div class="shell">
-${user ? `<aside class="sidebar" id="sidebar">
+${user ? `<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+<aside class="sidebar" id="sidebar">
   <div class="sidebar-header">
-    <a class="brand" href="/app"><span>snar</span></a>
+    <a class="brand" href="/app"><span translate="no">snar</span></a>
   </div>
   <div class="sidebar-account">
     <button type="button" id="account-menu-toggle" class="account-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">
@@ -145,7 +208,7 @@ ${user ? `<aside class="sidebar" id="sidebar">
       ${icon('chevron', 'chevron-icon')}
     </button>
     <div class="account-menu" id="account-menu" role="menu">
-      <a href="/app/account" role="menuitem">${icon('person', 'menu-icon')}Mein Profil</a>
+      <a href="/app/account" role="menuitem">${icon('person', 'menu-icon')}Dein Profil</a>
       <a href="/app/account" role="menuitem">${icon('settings', 'menu-icon')}Einstellungen</a>
       <form method="post" action="/logout" role="none"><button type="submit" role="menuitem">${icon('logout', 'menu-icon')}Abmelden</button></form>
     </div>
@@ -154,11 +217,13 @@ ${user ? `<aside class="sidebar" id="sidebar">
     ${NAV_GROUPS.map(g => navGroup(g, user, page)).join('')}
   </nav>
 </aside>` : ''}
-<div class="shell-main">
+<div class="shell-main" id="main-content" tabindex="-1">
 ${flash ? `<div class="flash toast ${esc(flash.type)}" role="status">${esc(flash.text)}</div>` : ''}
 ${body}
 </div>
 </div>
+${user ? bottomNav(page, user) : ''}
+<div id="copy-announcer" class="sr-only" role="status" aria-live="polite"></div>
 ${user ? `<dialog id="confirm-dialog" class="confirm-dialog">
   <h3>Wirklich löschen?</h3>
   <p class="confirm-dialog-text"></p>
@@ -176,7 +241,7 @@ function loginPage({ error = null, ssoEnabled = false } = {}) {
   const body = `
 <main class="login-shell">
 <div class="login-card">
-  <div class="login-brand"><span>snar</span></div>
+  <h1 class="login-brand"><span translate="no">snar</span></h1>
   <h2>Willkommen zurück!</h2>
   <h3>Melde dich an, um fortzufahren.</h3>
   ${error ? `<div class="flash error">${esc(error)}</div>` : ''}
@@ -186,7 +251,7 @@ function loginPage({ error = null, ssoEnabled = false } = {}) {
   <form method="post" action="/login" class="login-form">
     <div class="field">
       <label for="username">Anmeldename</label>
-      <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+      <input id="username" name="username" type="text" autocomplete="username" spellcheck="false" required autofocus>
     </div>
     <div class="field">
       <label for="pw">Passwort</label>
@@ -240,7 +305,7 @@ function searchTable({ links, theadHtml, rowsHtml, emptyText, showSearch = true 
   <div class="card table-card">
     ${showToolbar ? `
     <div class="table-toolbar">
-      ${showSearch ? `<input id="links-search" class="search-input" placeholder="Suchen…">` : ''}
+      ${showSearch ? `<input id="links-search" class="search-input" placeholder="Suchen…" aria-label="Suchen">` : ''}
       ${links.length > 10 ? `
       <div class="page-size-group">
         <button type="button" class="page-size-btn" data-page-size="10">10</button>
@@ -276,27 +341,34 @@ function linkTableRow(l, short, { extraColumn = null } = {}) {
   const status = isExpired(l) ? `<span class="badge expired">Abgelaufen</span>` : `<span class="badge active">Aktiv</span>`;
   return `
 <tr data-search="${searchHay}">
-  <td class="url-cell"><a href="${esc(l.target_url)}" target="_blank" rel="noopener" title="${esc(l.target_url)}">${esc(l.target_url)}</a></td>
-  <td class="desc-cell">${l.title ? esc(l.title) : '<span class="muted">–</span>'}</td>
-  <td class="muted nowrap">${fmtDate(l.created_at)}</td>
-  ${extraColumn === 'visibility' ? `<td class="nowrap">${visibilityBadge(l)}</td>` : ''}
-  <td class="nowrap">${status}</td>
-  ${extraColumn === 'owner' ? `<td class="muted nowrap">${esc(l.owner_name || '–')}</td>` : ''}
-  <td class="nowrap">
+  <td class="url-cell" data-label="Ziel-URL"><a href="${esc(l.target_url)}" target="_blank" rel="noopener" title="${esc(l.target_url)}">${esc(l.target_url)}</a></td>
+  <td class="desc-cell" data-label="Beschreibung">${l.title ? esc(l.title) : '<span class="muted">–</span>'}</td>
+  <td class="muted nowrap" data-label="Erstellt am">${fmtDate(l.created_at)}</td>
+  ${extraColumn === 'visibility' ? `<td class="nowrap" data-label="Sichtbarkeit">${visibilityBadge(l)}</td>` : ''}
+  <td class="nowrap" data-label="Status">${status}</td>
+  ${extraColumn === 'owner' ? `<td class="muted nowrap" data-label="Erstellt von">${esc(l.owner_name || '–')}</td>` : ''}
+  <td class="nowrap" data-label="Short-Link">
     <button type="button" class="copy-icon-btn" data-copy="${esc(short)}" title="Link kopieren" aria-label="Link kopieren">${icon('copy', 'copy-icon')}</button>
     <a class="slug" href="${esc(short)}" target="_blank" rel="noopener">${esc(stripProto(short))}</a>
   </td>
-  <td>${l.clicks_total ?? 0}</td>
-  <td><a class="btn ghost" href="/app/links/${l.id}">Details</a></td>
+  <td class="num-cell" data-label="Klicks">${fmtNum(l.clicks_total)}</td>
+  <td data-label=""><a class="btn ghost" href="/app/links/${l.id}">Details</a></td>
 </tr>`;
 }
 
-function dashboard({ links, shortUrl, domains, user, flash }) {
+// error/errorField/values: only set on the direct re-render after a failed
+// POST /app/links (see server.js) – lets the form keep what was typed and
+// highlight the one field that failed, instead of losing everything to a
+// redirect+flash. errorField null with error set (e.g. the generic "Link
+// konnte nicht angelegt werden" DB fallback) falls back to a plain banner.
+function dashboard({ links, shortUrl, domains, user, flash, error = null, errorField = null, values = {} }) {
+  const v = { target_url: '', slug: '', title: '', domain: domains[0] || '', expires_at: '', visibility: 'privat', ...values };
   const body = `
 <main>
 <div class="page">
 <h1>Neuen Kurzlink erstellen</h1>
 <section class="card">
+  ${error && !errorField ? `<div class="flash error">${esc(error)}</div>` : ''}
   <form method="post" action="/app/links" style="display:flex;flex-direction:column;gap:20px">
     <div class="grid-form">
       <div class="field">
@@ -304,30 +376,31 @@ function dashboard({ links, shortUrl, domains, user, flash }) {
         <!-- type="text" instead of type="url": browsers reject type="url"
              input without a scheme (e.g. "example.com") natively, before
              readLinkFields() in server.js can prepend "https://". -->
-        <input id="target" name="target_url" type="text" placeholder="https://…" required>
+        <input id="target" name="target_url" type="text" placeholder="https://…" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required>
+        ${fieldErrorSpan('target_url', errorField, error, 'target')}
       </div>
       <div class="field">
         <label for="slug">Wunsch-Kürzel <span class="muted">(optional)</span></label>
-        <input id="slug" name="slug" type="text" pattern="[A-Za-z0-9\\-_]{1,64}" placeholder="sommerfest">
+        <input id="slug" name="slug" type="text" pattern="[A-Za-z0-9\\-_]{1,64}" placeholder="sommerfest…" value="${esc(v.slug)}"${fieldInvalidAttrs('slug', errorField, 'slug')} spellcheck="false">
+        ${fieldErrorSpan('slug', errorField, error, 'slug')}
       </div>
     </div>
     <div class="grid-form">
       <div class="field grow">
         <label for="title">Beschreibung <span class="muted">(optional)</span></label>
-        <input id="title" name="title" type="text" placeholder="interner Name">
+        <input id="title" name="title" type="text" placeholder="interner Name…" value="${esc(v.title)}">
       </div>
     </div>
     <div class="grid-form">
-      ${domainField(domains[0] || '', domains)}
+      ${domainField(v.domain, domains)}
       <div class="field">
         <label for="expires_at">Läuft ab <span class="muted">(optional)</span></label>
-        <input id="expires_at" name="expires_at" type="datetime-local">
+        <input id="expires_at" name="expires_at" type="datetime-local" value="${esc(v.expires_at)}">
       </div>
     </div>
     <div class="radio-row divided">
-      ${visibilityRadios('privat')}
-      <div class="create-actions" style="margin-left:auto">
-        <span id="create-hint" class="create-hint">Ziel-URL eingeben, um zu starten</span>
+      ${visibilityRadios(v.visibility)}
+      <div class="create-actions">
         <button type="submit" id="create-btn" class="btn-create">
           <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><path d="M7.5 1.5v12M1.5 7.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           Erstellen
@@ -452,8 +525,8 @@ function statsChart(total, ranges) {
 <div class="stat-header">
   <div class="stat-row">
     <h2 style="margin:0">Statistik</h2>
-    <span class="num"><b id="stat-total-all">${total}</b> <span>gesamt</span></span>
-    <span class="num"><b id="stat-total-range">${initial.total}</b> <span id="stat-range-label">${initial.label}</span></span>
+    <span class="num"><b id="stat-total-all">${fmtNum(total)}</b> <span>gesamt</span></span>
+    <span class="num"><b id="stat-total-range">${fmtNum(initial.total)}</b> <span id="stat-range-label">${initial.label}</span></span>
   </div>
   <div class="range-group" id="stats-range-group" role="group" aria-label="Zeitraum" data-ranges="${esc(JSON.stringify(rangesForJs))}">
     <button type="button" class="range-btn" data-range="tag">Tag</button>
@@ -472,8 +545,8 @@ function statsChart(total, ranges) {
     <path class="chart-line" id="chart-line" d="${linePath}"/>
     <g id="chart-hover-group">${chartHoverBands(points, initial.values, initial.pointLabels)}</g>
   </svg>
-  <span class="chart-label" id="chart-label-max" style="top:2px">${max}</span>
-  <span class="chart-label" id="chart-label-mid" style="top:88px">${mid}</span>
+  <span class="chart-label" id="chart-label-max" style="top:2px">${fmtNum(max)}</span>
+  <span class="chart-label" id="chart-label-mid" style="top:88px">${fmtNum(mid)}</span>
   <div class="chart-hover-point" id="chart-hover-dot"></div>
   <div class="chart-tooltip" id="chart-tooltip">
     <div class="chart-tooltip-title" id="chart-tooltip-title"></div>
@@ -496,7 +569,14 @@ function splitBreakdownList(rows) {
   }).join('') + `</ul>`;
 }
 
-function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expired, user, flash, page = 'dashboard', canEditRestricted = true, canDelete = true, audit = [] }) {
+// error/errorField/values: only set on the direct re-render after a failed
+// POST .../update (see renderLinkDetail() in server.js) – same principle as
+// dashboard() above. values, when present, overrides the DB-backed link
+// fields with what was actually submitted (so a rejected edit isn't lost),
+// and the data-utc attribute is deliberately skipped in that case – it's
+// only meaningful for the real stored value, not a raw resubmitted string.
+function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expired, user, flash, page = 'dashboard', canEditRestricted = true, canDelete = true, audit = [], error = null, errorField = null, values = null }) {
+  const v = values || { target_url: link.target_url, title: link.title, domain: link.domain, expiresAtLocal };
   const body = `
 <main>
 <div class="page">
@@ -529,18 +609,19 @@ function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expir
            readonly (not disabled) for non-owners on org links: the value
            still has to be submitted, otherwise server-side validation would
            fail even though no change was intended (see POST .../update). -->
-      <input id="target" name="target_url" type="text" value="${esc(link.target_url)}" required${canEditRestricted ? '' : ' readonly'}>
+      <input id="target" name="target_url" type="text" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required${canEditRestricted ? '' : ' readonly'}>
+      ${fieldErrorSpan('target_url', errorField, error, 'target')}
       ${canEditRestricted ? '' : '<span class="muted" style="font-size:12.5px">Nur Besitzer:in/Admin können die Ziel-URL ändern</span>'}
     </div>
     <div class="grid-form">
       <div class="field">
         <label for="title">Beschreibung <span class="muted">(optional)</span></label>
-        <input id="title" name="title" type="text" value="${esc(link.title)}">
+        <input id="title" name="title" type="text" value="${esc(v.title)}">
       </div>
-      ${domainField(link.domain, domains)}
+      ${domainField(v.domain, domains)}
       <div class="field">
         <label for="expires_at">Läuft ab <span class="muted">(optional)</span></label>
-        <input id="expires_at" name="expires_at" type="datetime-local" value="${esc(expiresAtLocal)}"${link.expires_at ? ` data-utc="${esc(link.expires_at)}"` : ''}>
+        <input id="expires_at" name="expires_at" type="datetime-local" value="${esc(v.expiresAtLocal)}"${!values && link.expires_at ? ` data-utc="${esc(link.expires_at)}"` : ''}>
       </div>
     </div>
     <div class="radio-row divided">${visibilityRadios(link.visibility, !canEditRestricted)}</div>
@@ -585,7 +666,7 @@ ${canDelete ? `
     <p>Zur Bestätigung bitte das Kürzel eintippen. Mit dem Löschen werden auch alle Klickdaten gelöscht, und bereits gedruckte QR-Codes laufen danach ins Leere.</p>
   </div>
   <form method="post" action="/app/links/${link.id}/delete" data-confirm="Diesen Link wirklich löschen?">
-    <input type="text" data-confirm-slug="${esc(link.slug)}" placeholder="${esc(link.slug)} eintippen" autocomplete="off">
+    <input type="text" data-confirm-slug="${esc(link.slug)}" placeholder="${esc(link.slug)} eintippen…" aria-label="Kürzel zur Bestätigung eingeben" autocomplete="off">
     <button class="destructive-ghost" type="submit">Löschen…</button>
   </form>
 </section>` : ''}
@@ -671,10 +752,10 @@ function qrTypePanels(v) {
   <div class="qr-type-panel" data-panel="epc">
     <div class="grid-form">
       <div class="field grow"><label for="epc_name">Begünstigter</label><input id="epc_name" name="epc_name" type="text" maxlength="70" value="${esc(v.epc_name)}"></div>
-      <div class="field"><label for="epc_iban">IBAN</label><input id="epc_iban" name="epc_iban" type="text" placeholder="DE00…" value="${esc(v.epc_iban)}"></div>
+      <div class="field"><label for="epc_iban">IBAN</label><input id="epc_iban" name="epc_iban" type="text" placeholder="DE00…" spellcheck="false" value="${esc(v.epc_iban)}"></div>
     </div>
     <div class="grid-form">
-      <div class="field"><label for="epc_bic">BIC <span class="muted">(optional)</span></label><input id="epc_bic" name="epc_bic" type="text" placeholder="nur außerhalb SEPA nötig" value="${esc(v.epc_bic)}"></div>
+      <div class="field"><label for="epc_bic">BIC <span class="muted">(optional)</span></label><input id="epc_bic" name="epc_bic" type="text" placeholder="nur außerhalb SEPA nötig" spellcheck="false" value="${esc(v.epc_bic)}"></div>
       <div class="field"><label for="epc_amount">Betrag (EUR) <span class="muted">(optional)</span></label><input id="epc_amount" name="epc_amount" type="number" step="0.01" min="0" value="${esc(v.epc_amount)}"></div>
       <div class="field grow"><label for="epc_purpose">Verwendungszweck <span class="muted">(optional)</span></label><input id="epc_purpose" name="epc_purpose" type="text" maxlength="140" value="${esc(v.epc_purpose)}"></div>
     </div>
@@ -736,12 +817,12 @@ function userTableRow(u, currentUser) {
   const searchHay = esc(u.username).toLowerCase();
   return `
 <tr data-search="${searchHay}">
-  <td class="cell-sub">${esc(u.username)}</td>
-  <td><span class="badge${u.role === 'admin' ? '' : ' muted'}">${u.role === 'admin' ? 'Admin' : 'Mitglied'}</span></td>
-  <td class="muted nowrap">${fmtDate(u.created_at)}</td>
-  <td class="muted nowrap">${fmtDate(u.last_login_at)}</td>
-  <td>${u.links_count}</td>
-  <td class="nowrap">
+  <td class="cell-sub" data-label="Anmeldename">${esc(u.username)}</td>
+  <td data-label="Rolle"><span class="badge${u.role === 'admin' ? '' : ' muted'}">${u.role === 'admin' ? 'Admin' : 'Mitglied'}</span></td>
+  <td class="muted nowrap" data-label="Erstellt am">${fmtDate(u.created_at)}</td>
+  <td class="muted nowrap" data-label="Letzter Login am">${fmtDate(u.last_login_at)}</td>
+  <td class="num-cell" data-label="Links">${fmtNum(u.links_count)}</td>
+  <td class="nowrap" data-label="">
     ${u.id === currentUser.id
       ? `<button class="ghost" type="button" disabled title="Selbstlöschung blockiert">Löschen</button>`
       : `<form method="post" action="/app/users/${u.id}/delete" class="inline" data-delete-user="${u.id}" data-username="${esc(u.username)}">
@@ -750,7 +831,12 @@ function userTableRow(u, currentUser) {
 </tr>`;
 }
 
-function usersPage({ users, user, flash }) {
+// error/errorField/values: only set on the direct re-render after a failed
+// POST /app/users (see server.js) – same principle as dashboard() above.
+// Password is deliberately never part of `values` – re-echoing a rejected
+// password back into the form isn't worth the security/UX tradeoff.
+function usersPage({ users, user, flash, error = null, errorField = null, values = {} }) {
+  const v = { username: '', role: 'member', ...values };
   const body = `
 <main>
 <div class="page">
@@ -758,20 +844,23 @@ function usersPage({ users, user, flash }) {
 
 <section class="card">
   <h2>Account anlegen</h2>
+  ${error && !errorField ? `<div class="flash error">${esc(error)}</div>` : ''}
   <form method="post" action="/app/users" class="grid-form">
     <div class="field">
       <label for="nu">Nutzername</label>
-      <input id="nu" name="username" type="text" pattern="[A-Za-z0-9\\-_.]{2,32}" placeholder="clara" required>
+      <input id="nu" name="username" type="text" pattern="[A-Za-z0-9\\-_.]{2,32}" placeholder="clara" value="${esc(v.username)}"${fieldInvalidAttrs('username', errorField, 'nu')} spellcheck="false" required>
+      ${fieldErrorSpan('username', errorField, error, 'nu')}
     </div>
     <div class="field">
       <label for="np">Startpasswort</label>
-      <input id="np" name="password" type="text" minlength="8" placeholder="mind. 8 Zeichen" required>
+      <input id="np" name="password" type="text" minlength="8" placeholder="mind. 8 Zeichen"${fieldInvalidAttrs('password', errorField, 'np')} autocomplete="off" required>
+      ${fieldErrorSpan('password', errorField, error, 'np')}
     </div>
     <div class="field">
       <label for="nr">Rolle</label>
       <select id="nr" name="role">
-        <option value="member" selected>Mitglied</option>
-        <option value="admin">Admin</option>
+        <option value="member" ${v.role !== 'admin' ? 'selected' : ''}>Mitglied</option>
+        <option value="admin" ${v.role === 'admin' ? 'selected' : ''}>Admin</option>
       </select>
     </div>
     <div class="field submit"><button type="submit">Anlegen</button></div>
@@ -819,10 +908,10 @@ function domainTableRow(d, isDefault, showDefaultControl) {
   const searchHay = esc(stripProto(d.origin)).toLowerCase();
   return `
 <tr data-search="${searchHay}">
-  <td class="cell-sub">${esc(stripProto(d.origin))}${isDefault && showDefaultControl ? ' <span class="badge">Standard</span>' : ''}</td>
-  <td class="muted nowrap">${fmtDate(d.created_at)}</td>
-  <td>${d.links_count}</td>
-  <td class="nowrap">
+  <td class="cell-sub" data-label="Domain">${esc(stripProto(d.origin))}${isDefault && showDefaultControl ? ' <span class="badge">Standard</span>' : ''}</td>
+  <td class="muted nowrap" data-label="Hinzugefügt am">${fmtDate(d.created_at)}</td>
+  <td class="num-cell" data-label="Links">${fmtNum(d.links_count)}</td>
+  <td class="nowrap" data-label="">
     ${!isDefault && showDefaultControl ? `<form method="post" action="/app/domains/${d.id}/set-default" class="inline" style="margin-right:8px">
       <button class="btn ghost" type="submit">Als Standard setzen</button>
     </form>` : ''}
@@ -833,7 +922,10 @@ function domainTableRow(d, isDefault, showDefaultControl) {
 </tr>`;
 }
 
-function domainsPage({ domains, user, flash }) {
+// error/errorField/values: only set on the direct re-render after a failed
+// POST /app/domains (see server.js) – same principle as dashboard() above.
+function domainsPage({ domains, user, flash, error = null, errorField = null, values = {} }) {
+  const v = { origin: '', ...values };
   const body = `
 <main>
 <div class="page">
@@ -846,7 +938,8 @@ function domainsPage({ domains, user, flash }) {
       <!-- type="text" instead of type="url": browsers reject type="url"
            input without a scheme natively, before server.js can prepend
            "https://" (readLinkFields/POST /app/domains, see URI_SCHEME_RE). -->
-      <input id="origin" name="origin" type="text" placeholder="example.com" required>
+      <input id="origin" name="origin" type="text" placeholder="example.com…" value="${esc(v.origin)}"${fieldInvalidAttrs('origin', errorField, 'origin')} spellcheck="false" required>
+      ${fieldErrorSpan('origin', errorField, error, 'origin')}
     </div>
     <div class="field submit"><button type="submit">Hinzufügen</button></div>
   </form>
@@ -875,14 +968,14 @@ function accountPage({ user, flash }) {
   <h2>Passwort ändern</h2>
   ${user.sso_subject ? `
   <p class="muted" style="line-height:1.55">Dieser Account ist über SSO angebunden — das Passwort wird bei deinem Identity Provider verwaltet, nicht in snar.</p>` : `
-  <form method="post" action="/app/account/password" class="stack">
+  <form id="password-form" method="post" action="/app/account/password" class="stack">
     <div><label for="cp">Aktuelles Passwort</label>
     <input id="cp" name="current" type="password" autocomplete="current-password" required></div>
     <div><label for="np2">Neues Passwort</label>
     <input id="np2" name="next" type="password" autocomplete="new-password" minlength="8" required></div>
     <div><label for="np3">Wiederholen</label>
     <input id="np3" name="next_repeat" type="password" autocomplete="new-password" minlength="8" required></div>
-    <button type="submit">Ändern</button>
+    <button type="submit">Passwort ändern</button>
   </form>
   <p class="muted" style="margin-top:15px;line-height:1.55">Nur gegen aktuelles Passwort möglich. Andere Geräte werden dabei abgemeldet — dieses bleibt angemeldet.</p>`}
 </section>
