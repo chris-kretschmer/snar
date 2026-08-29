@@ -108,26 +108,35 @@ main { padding: 36px 32px 56px; }
 }
 .account-trigger:hover { background: var(--line2); }
 .chevron-icon { width: 14px; height: 14px; flex: none; margin-left: auto; color: var(--muted2); }
-/* display:none bleibt im Ruhezustand erhalten (transition-behavior:
-   allow-discrete lässt display selbst an der Transition teilnehmen) – ein
-   geschlossenes Popover nimmt so weiterhin keinerlei Layout-/Scroll-Fläche
-   ein. Reine opacity/visibility-Lösungen (ohne display) besetzen ihre volle
-   Box auch geschlossen, was je nach Trigger-Position Seiten-Overflow
-   auslösen kann, ohne dass der Nutzer das Popover je geöffnet hätte. */
-.account-menu {
-  display: none; position: absolute; left: 8px; right: 8px; top: calc(100% + 4px); z-index: 10;
+/* Shared popover base (account menu, custom-select menu, datetime panel
+   below): display:none→block, participating in the fade via allow-discrete
+   so a closed popover keeps taking zero layout/scroll space – a plain
+   opacity/visibility fade would still occupy its full box while closed,
+   which can cause page overflow depending on where the trigger sits.
+   Positioning/z-index/padding and any extra per-popover rules (max-height,
+   width, .align-right, …) stay with each one below; only what's genuinely
+   identical across all three lives here. */
+.account-menu, .custom-select-menu, .custom-datetime-panel {
+  display: none; position: absolute; z-index: 20;
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-hover); padding: 6px;
+  box-shadow: var(--shadow-hover);
   opacity: 0;
   transition: opacity .15s ease, display .15s allow-discrete;
 }
-.account-menu.open { display: block; opacity: 1; }
-@starting-style { .account-menu.open { opacity: 0; } }
-@media (prefers-reduced-motion: no-preference) {
-  .account-menu { transform: translateY(-4px); transition: opacity .15s ease, transform .15s ease, display .15s allow-discrete; }
-  .account-menu.open { transform: translateY(0); }
-  @starting-style { .account-menu.open { transform: translateY(-4px); } }
+.account-menu.open, .custom-select-menu.open, .custom-datetime-panel.open { display: block; opacity: 1; }
+@starting-style {
+  .account-menu.open, .custom-select-menu.open, .custom-datetime-panel.open { opacity: 0; }
 }
+@media (prefers-reduced-motion: no-preference) {
+  .account-menu, .custom-select-menu, .custom-datetime-panel {
+    transform: translateY(-4px); transition: opacity .15s ease, transform .15s ease, display .15s allow-discrete;
+  }
+  .account-menu.open, .custom-select-menu.open, .custom-datetime-panel.open { transform: translateY(0); }
+  @starting-style {
+    .account-menu.open, .custom-select-menu.open, .custom-datetime-panel.open { transform: translateY(-4px); }
+  }
+}
+.account-menu { left: 8px; right: 8px; top: calc(100% + 4px); z-index: 10; padding: 6px; }
 .account-menu a, .account-menu button {
   all: unset; box-sizing: border-box;
   display: flex; align-items: center; gap: 10px; width: 100%;
@@ -223,23 +232,15 @@ select {
    erzwingen. Formularfelder färben sich nicht blau – nur der Rahmen dunkelt
    leicht nach als Affordance. */
 .custom-select-trigger:hover { background: #fff; border-color: #c3c8d4; color: var(--ink); }
+/* Ohne das läuft ein langer, unbrechbarer Wert (Domain, Nutzername beim
+   "Links übertragen an"-Dropdown) über den Rahmen des Feldes hinaus, statt
+   sauber abgeschnitten zu werden – gleiches Muster wie .dt-label unten. */
+.custom-select-trigger .select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .custom-select-trigger .chevron-icon { width: 14px; height: 14px; margin-left: auto; color: var(--muted); flex: none; transform: translateY(1px); }
 .custom-select-trigger:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent-focus); outline-offset: 0; }
-/* Gleiches Prinzip wie .account-menu oben. */
 .custom-select-menu {
-  display: none; position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-hover); padding: 6px; max-height: 240px; overflow-y: auto;
-  overscroll-behavior: contain;
-  opacity: 0;
-  transition: opacity .15s ease, display .15s allow-discrete;
-}
-.custom-select-menu.open { display: block; opacity: 1; }
-@starting-style { .custom-select-menu.open { opacity: 0; } }
-@media (prefers-reduced-motion: no-preference) {
-  .custom-select-menu { transform: translateY(-4px); transition: opacity .15s ease, transform .15s ease, display .15s allow-discrete; }
-  .custom-select-menu.open { transform: translateY(0); }
-  @starting-style { .custom-select-menu.open { transform: translateY(-4px); } }
+  left: 0; right: 0; top: calc(100% + 4px); padding: 6px;
+  max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
 }
 .custom-select-option {
   all: unset; box-sizing: border-box; display: block; width: 100%;
@@ -263,23 +264,12 @@ select {
    selben Skriptdurchlauf um (wie zuvor bei display:none/block), das
    funktioniert also unverändert weiter. */
 .custom-datetime-panel {
-  display: none; position: absolute; left: 0; top: calc(100% + 4px); z-index: 20;
-  width: 268px; max-width: calc(100vw - 16px);
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
-  box-shadow: var(--shadow-hover); padding: 14px; overscroll-behavior: contain;
-  opacity: 0;
-  transition: opacity .15s ease, display .15s allow-discrete;
+  left: 0; top: calc(100% + 4px); width: 268px; max-width: calc(100vw - 16px);
+  padding: 14px; overscroll-behavior: contain;
 }
 /* Wird per JS gesetzt, wenn das Panel rechts aus dem Viewport ragen würde
    (z. B. schmales Feld am rechten Rand). */
 .custom-datetime-panel.align-right { left: auto; right: 0; }
-.custom-datetime-panel.open { display: block; opacity: 1; }
-@starting-style { .custom-datetime-panel.open { opacity: 0; } }
-@media (prefers-reduced-motion: no-preference) {
-  .custom-datetime-panel { transform: translateY(-4px); transition: opacity .15s ease, transform .15s ease, display .15s allow-discrete; }
-  .custom-datetime-panel.open { transform: translateY(0); }
-  @starting-style { .custom-datetime-panel.open { transform: translateY(-4px); } }
-}
 .dt-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 /* Sichtbar bleibt die 26px-Optik aus dem knappen Kalenderkopf, das
    unsichtbare ::before hebt die Klickfläche auf ~40px an (Platz genug
@@ -337,6 +327,14 @@ button.destructive-ghost:hover, .btn.destructive-ghost:hover { background: var(-
 button:disabled, button:disabled:hover {
   cursor: not-allowed; background: transparent; color: var(--muted3); border-color: var(--line2);
 }
+/* Domain-Erreichbarkeits-Check (Domainverwaltung, "Testen"-Button in
+   .row-actions, siehe domainTableRow() in views.js) – der Button selbst wird
+   nach dem Klick zum Ergebnis (Label + Farbe), bleibt aber klickbar für einen
+   erneuten Check, siehe app.js. */
+.reach-test-btn.ok { color: var(--success); border-color: var(--success); }
+.reach-test-btn.ok:hover { color: var(--success); border-color: var(--success); background: var(--success-soft); }
+.reach-test-btn.fail { color: var(--danger); border-color: var(--danger-border); }
+.reach-test-btn.fail:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
 .stack > * + * { margin-top: 12px; }
 .grid-form { display: flex; flex-wrap: wrap; gap: 20px; align-items: end; }
 .grid-form .field { flex: 1 1 180px; }
@@ -424,31 +422,41 @@ button:disabled, button:disabled:hover {
    button), so without wrapping they force their row wider than the
    available column – wrap avoids that in narrow columns (e.g. the tablet
    width range, see .detail-grid). */
-.range-group, .page-size-group { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; background: var(--bg); border-radius: var(--radius-sm); padding: 3px; }
+/* Segmented control: shared "pill group" skin behind .range-btn/.page-size-btn
+   (stats period/page size), .tab-link (Admin-Einstellungen, real <a> nav
+   between two routes) and .qr-type-tabs span (static QR type, CSS-only radio
+   trick, see further below) – three independent implementations of the same
+   look used to each carry the full declaration list; consolidated here so a
+   future style tweak (e.g. the pill height) only needs to change once. Each
+   keeps its own rules below only for what genuinely differs: element type
+   (button/a/span), clickability, and .qr-type-tabs' radio-driven active state. */
+.range-group, .page-size-group, .tab-group, .qr-type-tabs {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  background: var(--bg); border-radius: var(--radius-sm); padding: 3px;
+}
+.tab-group, .qr-type-tabs { width: fit-content; }
+.range-btn, .page-size-btn, .tab-link, .qr-type-tabs span {
+  height: 40px; font-size: 13px; font-weight: 500; color: var(--muted); border-radius: var(--radius-xs);
+}
+.tab-link:focus-visible, .qr-type-tabs label:focus-within span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.range-btn.active, .range-btn.active:hover, .page-size-btn.active, .page-size-btn.active:hover,
+.tab-link.active, .tab-link.active:hover, .qr-type-tabs label:has(input:checked) span {
+  background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow);
+}
+
 .range-btn, .page-size-btn {
-  background: transparent; border: 1px solid transparent; color: var(--muted);
-  font-size: 13px; font-weight: 500; font-family: inherit; cursor: pointer;
-  height: 40px; padding: 0 12px; border-radius: var(--radius-xs); text-align: center;
+  background: transparent; border: 1px solid transparent; font-family: inherit; cursor: pointer;
+  padding: 0 12px; text-align: center;
 }
 .range-btn { min-width: 52px; }
 .range-btn:hover, .page-size-btn:hover { background: transparent; border-color: transparent; color: var(--ink); }
-.range-btn.active, .range-btn.active:hover,
-.page-size-btn.active, .page-size-btn.active:hover {
-  background: var(--surface); border-color: var(--line); color: var(--ink); font-weight: 600; box-shadow: var(--shadow);
-}
+.range-btn.active, .page-size-btn.active { border-color: var(--line); }
 
 /* Seiten-Tabs (z. B. Admin-Einstellungen: Zugangs-/Domainverwaltung) – echte
-   <a>-Navigation zwischen zwei Server-Routen statt Client-Toggle, optisch an
-   .range-group/.range-btn angelehnt (siehe adminTabs() in views.js). */
-.tab-group { display: flex; align-items: center; gap: 3px; background: var(--bg); border-radius: var(--radius-sm); padding: 3px; width: fit-content; flex-wrap: wrap; }
-.tab-link {
-  display: inline-flex; align-items: center; height: 40px; padding: 0 14px;
-  font-size: 13px; font-weight: 500; color: var(--muted); border-radius: var(--radius-xs);
-  text-decoration: none;
-}
+   <a>-Navigation zwischen zwei Server-Routen statt Client-Toggle (siehe
+   adminTabs() in views.js). */
+.tab-link { display: inline-flex; align-items: center; padding: 0 14px; text-decoration: none; }
 .tab-link:hover { color: var(--ink); }
-.tab-link.active, .tab-link.active:hover { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow); }
-.tab-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Klicks-Liniendiagramm (Statistik-Bereich der Detailseite) */
 .chart-wrap { position: relative; margin-top: 18px; }
@@ -526,8 +534,13 @@ button:disabled, button:disabled:hover {
    sehr schmalen Viewports (Mobile-Kartenbreite) bis auf wenige Pixel – dann
    bricht word-break:break-word einzelne Wörter mitten im Zeichen, statt
    sauber je Wort umzubrechen. Lieber ab dieser Breite horizontal scrollen
-   (wie bei den Link-Tabellen) als lesbare Wörter zerreißen. */
-.tbl { min-width: 560px; }
+   (wie bei den Link-Tabellen) als lesbare Wörter zerreißen.
+   :not(.linktable): Dashboard/Tresor/Zugangs-/Domainverwaltung tragen
+   ebenfalls die Klasse .tbl (siehe searchTable() in views.js), haben aber
+   schon ihr eigenes, vollständiges Card-Stacking fürs Mobile (siehe
+   .linktable td weiter unten) – ein min-width hier würde das nur wieder
+   aufbrechen und dieselbe Seiten-Überlauf-Klasse Bug zurückbringen. */
+.tbl:not(.linktable) { min-width: 560px; }
 
 /* Link-Tabelle (Meine Links) */
 .table-card { padding: 0; overflow: hidden; }
@@ -583,7 +596,15 @@ button:disabled, button:disabled:hover {
    sich sonst per Shrink-to-fit selbst auf ca. die Summenbreite der Buttons,
    was bei genau passender Spaltenbreite durch Rundungsdifferenzen von unter
    1px unnötig umbricht, obwohl eigentlich genug Platz da ist. */
-.row-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+/* Schmaleres horizontales Padding als der Standard-Button (9px 20px): in der
+   Domainverwaltung können hier bis zu drei Buttons gleichzeitig stehen
+   ("Testen"-Ergebnis + "Als Standard setzen" + "Entfernen") – der
+   Zeilenumbruch (s.o.) bleibt als Fallback, aber so passen die allermeisten
+   Kombinationen auf eine Zeile. Vertikales Padding/Schriftgröße bleiben beim
+   Standard, sonst wirken diese Buttons neben "Anlegen"/"Hinzufügen" auf
+   derselben Seite spürbar kleiner/leichter statt nur schmaler. */
+.row-actions button, .row-actions .btn { padding: 9px 12px; }
 
 /* Link-/Nutzer-/Domain-Tabelle als Karten-Stapel statt seitlich scrollender
    Tabelle unter der Sidebar-Bruchgrenze: jede <tr> wird zur Karte, jede <td>
@@ -595,7 +616,12 @@ button:disabled, button:disabled:hover {
    nach den .url-cell/.desc-cell-Basisregeln oben stehen, sonst gewinnen
    die (gleiche Spezifität, aber früher im Dokument) trotz Media Query. */
 @media (max-width: 760px) {
-  .table-scroll { border-top: none; overflow-x: visible; padding: 14px; }
+  /* Nur für .linktable: das wird zum Karten-Stapel und braucht deshalb kein
+     Scrollen mehr. Die reinen .tbl-Tabellen (Letzte Klicks/Änderungsverlauf
+     auf der Link-Detailseite, siehe linkDetail() in views.js) bleiben echte
+     Tabellen und brauchen overflow-x:auto (Basisregel oben) weiterhin, sonst
+     überläuft die ganze Seite statt nur die Tabelle zu scrollen. */
+  .table-scroll:has(.linktable) { border-top: none; overflow-x: visible; padding: 14px; }
   /* Nicht display:none: das entfernt den <thead> auch aus dem
      Accessibility-Tree, Screenreader-Nutzer:innen verlieren dadurch jede
      Spalten-Zuordnung (die ::before-Labels unten sind rein visuell, werden
@@ -702,15 +728,13 @@ button:disabled, button:disabled:hover {
 }
 
 /* Statischer QR-Code Generator: Typ-Tabs (URL/Text/WLAN/EPC) – CSS-only per
-   :has() auf .qr-form, siehe qrTypeTabs()/qrTypePanels() in views.js. Optik
-   angelehnt an .range-group/.range-btn (Segment-Gruppe), Struktur (verstecktes
-   Radio + Label/Span) damit es auch ohne JS klappt. */
-.qr-type-tabs { display: flex; align-items: center; gap: 3px; background: var(--bg); border-radius: var(--radius-sm); padding: 3px; width: fit-content; flex-wrap: wrap; }
+   :has() auf .qr-form, siehe qrTypeTabs()/qrTypePanels() in views.js. Struktur
+   (verstecktes Radio + Label/Span) damit es auch ohne JS klappt; die "pill"-
+   Optik selbst kommt aus der geteilten Segmented-control-Regel weiter oben
+   (.range-group/.range-btn), hier nur noch das Radio/Label-spezifische. */
 .qr-type-tabs input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .qr-type-tabs label { margin: 0; cursor: pointer; }
-.qr-type-tabs span { display: inline-block; height: 40px; line-height: 40px; padding: 0 14px; font-size: 13px; font-weight: 500; color: var(--muted); border-radius: var(--radius-xs); }
-.qr-type-tabs label:has(input:checked) span { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow); }
-.qr-type-tabs label:focus-within span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.qr-type-tabs span { display: inline-block; line-height: 40px; padding: 0 14px; }
 /* flex-direction/gap wirken erst, sobald ein Panel sichtbar wird (unten) –
    sorgt z. B. beim EPC-Panel für denselben 20px-Zeilenabstand zwischen seinen
    zwei .grid-form-Zeilen wie im Formular von "Erstellen". */

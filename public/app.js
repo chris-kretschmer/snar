@@ -47,6 +47,7 @@ document.querySelectorAll('select').forEach((select) => {
   reassignLabel(select, trigger);
 
   const label = document.createElement('span');
+  label.className = 'select-label';
   const syncLabel = () => { label.textContent = select.options[select.selectedIndex]?.textContent || ''; };
   trigger.appendChild(label);
   trigger.insertAdjacentHTML('beforeend', CHEVRON_SVG);
@@ -362,6 +363,43 @@ document.addEventListener('click', async (e) => {
   } catch {
     window.prompt('Zum Kopieren: Strg+C drücken', btn.dataset.copy);
   }
+});
+
+// Domain-Erreichbarkeits-Check (Domainverwaltung): rein manuell per Klick auf
+// "Testen", niemals automatisch beim Laden – siehe Kommentar bei POST
+// .../check-reachability in server.js (DNS/Reverse-Proxy einer frisch
+// eingetragenen Domain sind oft noch nicht fertig, ein automatischer Check
+// würde das fälschlich als "nicht erreichbar" zeigen). Der Button selbst wird
+// zum Ergebnis (Label + Farbe wechseln zu "Erreichbar"/"Nicht erreichbar"),
+// bleibt aber klickbar – ein weiterer Klick prüft einfach erneut. Text statt
+// reiner Farbe/Icon: Wortbedeutung ist eindeutig unabhängig von
+// Farbwahrnehmung (Rot-Grün-Schwäche), rein farbcodierte Information wäre
+// ohnehin ein WCAG-Verstoß. Das Ergebnis geht zusätzlich in dieselbe
+// Live-Region wie die Kopier-Bestätigung oben, sonst bekommen
+// Screenreader-Nutzer:innen vom reinen Label-/Farbwechsel nichts mit.
+document.querySelectorAll('.reach-test-btn').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    btn.classList.remove('ok', 'fail');
+    btn.disabled = true;
+    btn.textContent = 'Wird geprüft…';
+    try {
+      const res = await fetch(`/app/domains/${btn.dataset.domainId}/check-reachability`, { method: 'POST' });
+      const data = await res.json();
+      const text = data.ok ? 'Erreichbar' : 'Nicht erreichbar';
+      btn.textContent = text;
+      btn.classList.toggle('ok', data.ok);
+      btn.classList.toggle('fail', !data.ok);
+      btn.title = (data.ok ? 'Zeigt auf diese snar-Instanz.' : (data.reason || 'Nicht erreichbar.')) + ' Erneut klicken zum erneuten Prüfen.';
+      if (copyAnnouncer) copyAnnouncer.textContent = `${text}: ${btn.title}`;
+    } catch {
+      btn.textContent = 'Nicht erreichbar';
+      btn.classList.add('fail');
+      btn.title = 'Prüfung fehlgeschlagen (Netzwerkfehler im Browser). Erneut klicken zum erneuten Prüfen.';
+      if (copyAnnouncer) copyAnnouncer.textContent = btn.title;
+    } finally {
+      btn.disabled = false;
+    }
+  });
 });
 
 // "← Zurück" breadcrumb: uses real browser history to return to the actual

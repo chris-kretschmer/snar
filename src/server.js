@@ -2,6 +2,8 @@ const express = require('express');
 const compression = require('compression');
 const crypto = require('crypto');
 const path = require('path');
+const dns = require('dns');
+const net = require('net');
 const QRCode = require('qrcode');
 // ESM-only package – as of Node 20.19/22.12, require() can load ESM
 // directly (see package.json "engines"), no dynamic import() needed.
@@ -42,8 +44,22 @@ seedDomainsIfEmpty(
 const SECRET = getSessionSecret();
 const RESERVED = new Set(['app', 'login', 'logout', 'static', 'favicon.ico', 'robots.txt', 'healthz']);
 
+// Random per-process value, not a secret (never guards anything, just an
+// identifier) – lets the "Domain testen"-check (POST .../check-reachability
+// below) tell "some server answered on this domain" apart from "this
+// specific snar instance answered on this domain", e.g. a parked domain or
+// unrelated website would otherwise look reachable.
+const INSTANCE_TOKEN = crypto.randomBytes(16).toString('hex');
+
+// Well-formed "salt:hash" so verifyPassword() always runs the real (slow)
+// scrypt computation, even for a username that doesn't exist – otherwise
+// POST /login returns near-instantly for unknown usernames but only after
+// scrypt for known ones, letting an attacker enumerate valid usernames purely
+// from response timing despite the identical error message.
+const DUMMY_PASSWORD_HASH = hashPassword(crypto.randomBytes(16).toString('hex'));
+
 function getDomains() {
-  return stmts.listDomains.all().map(d => d.origin);
+  return stmts.listDomainOrigins.all().map(d => d.origin);
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +158,11 @@ function setSessionCookie(res, req, user) {
     `snar_session=${makeSessionCookie(user.id, user.token_version)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${60 * 60 * 24 * 30}${req.secure ? '; Secure' : ''}`);
 }
 
-function sessionUser(token) {
+// Splits "<payload>.<sig>" on the last dot and returns payload only if sig
+// is a valid HMAC over it (constant-time compare) – shared by sessionUser()
+// and verifyOidcState() below, which otherwise duplicated this exact
+// signature-checking logic; that's the wrong place for two copies to drift.
+function verifySigned(token) {
   if (!token) return null;
   const i = token.lastIndexOf('.');
   if (i < 0) return null;
@@ -151,6 +171,12 @@ function sessionUser(token) {
   const expected = sign(payload);
   if (sig.length !== expected.length) return null;
   if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  return payload;
+}
+
+function sessionUser(token) {
+  const payload = verifySigned(token);
+  if (!payload) return null;
   const [, idStr, verStr, expStr] = payload.split('.');
   if (!(Number(expStr) > Date.now())) return null; // old 3-part cookies have undefined here -> NaN -> rejected
   const user = stmts.userById.get(Number(idStr));
@@ -176,14 +202,8 @@ function signOidcState(payload) {
   return `${json}.${sign(json)}`;
 }
 function verifyOidcState(token) {
-  if (!token) return null;
-  const i = token.lastIndexOf('.');
-  if (i < 0) return null;
-  const json = token.slice(0, i);
-  const sig = token.slice(i + 1);
-  const expected = sign(json);
-  if (sig.length !== expected.length) return null;
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  const json = verifySigned(token);
+  if (!json) return null;
   try { return JSON.parse(Buffer.from(json, 'base64url').toString('utf8')); } catch { return null; }
 }
 
@@ -419,13 +439,15 @@ function toDatetimeLocal(dbString) {
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
+const normalizeEc = (ec) => (['L', 'M', 'Q', 'H'].includes(ec) ? ec : 'M');
+
 // Errors (e.g. content exceeds QR capacity) are caught here and answered
 // with 400: Express 4 doesn't catch errors from async handlers, and an
 // unhandled rejection would kill the whole process. The download header is
 // only set after successful generation, so an error response never gets
 // downloaded as a file.
 async function sendQr(res, text, { format, ec = 'M', size = 512, download = false, filename = 'qrcode', color }) {
-  const level = ['L', 'M', 'Q', 'H'].includes(ec) ? ec : 'M';
+  const level = normalizeEc(ec);
   try {
     let body, type;
     if (format === 'png') {
@@ -448,8 +470,7 @@ async function sendQr(res, text, { format, ec = 'M', size = 512, download = fals
 // QR library encodes the text as paths, not as raw text in the SVG – so
 // it's safe to embed directly, injection-wise.
 function qrSvgString(text, ec, color) {
-  const level = ['L', 'M', 'Q', 'H'].includes(ec) ? ec : 'M';
-  return QRCode.toString(text, { type: 'svg', errorCorrectionLevel: level, margin: 2, color });
+  return QRCode.toString(text, { type: 'svg', errorCorrectionLevel: normalizeEc(ec), margin: 2, color });
 }
 
 // Only selectable in the static generator (dynamic link QR codes
@@ -471,6 +492,7 @@ function qrColors(darkRaw, lightRaw, transparentBg) {
 // matched to the use case: WLAN/EPC often end up printed/stuck somewhere
 // and get handled, so more robust (H); URL/Text stay at the default (M).
 const EC_BY_TYPE = { url: 'M', text: 'M', wlan: 'H', epc: 'H' };
+const QR_TYPES = Object.keys(EC_BY_TYPE);
 
 // Static generator: assemble content depending on the active tab
 // (URL/Text/WLAN/EPC). "url"/"text" are pure passthrough text, WLAN/EPC
@@ -517,8 +539,7 @@ const URI_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 function ensureScheme(input) {
   return input && !URI_SCHEME_RE.test(input) ? `https://${input}` : input;
 }
-function buildQrTypeContent(req) {
-  const type = ['url', 'text', 'wlan', 'epc'].includes(req.body.qr_type) ? req.body.qr_type : 'text';
+function buildQrTypeContent(req, type) {
   if (type === 'url') {
     const raw = String(req.body.url_value || '').trim();
     return raw ? ensureScheme(raw) : '';
@@ -571,7 +592,8 @@ app.post('/login', (req, res) => {
     return res.status(429).send(views.loginPage({ error: 'Zu viele Versuche. Bitte in 15 Minuten erneut probieren.', ssoEnabled: OIDC_ENABLED }));
   }
   const user = stmts.userByName.get(username);
-  if (!user || !verifyPassword(String(req.body.password || ''), user.password_hash)) {
+  const passwordOk = verifyPassword(String(req.body.password || ''), user ? user.password_hash : DUMMY_PASSWORD_HASH);
+  if (!user || !passwordOk) {
     noteFailedLogin(ipKey);
     if (userKey) noteFailedLogin(userKey);
     return res.status(401).send(views.loginPage({ error: 'Nutzername oder Passwort falsch.', ssoEnabled: OIDC_ENABLED }));
@@ -677,6 +699,9 @@ app.get('/login/sso/callback', async (req, res) => {
 
 app.get('/', (req, res) => res.redirect(sessionUser(getCookie(req, 'snar_session')) ? '/app' : '/login'));
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
+// Public, unauthenticated (same spirit as /healthz) – purely a self-
+// recognition marker for the "Domain testen"-check, see INSTANCE_TOKEN above.
+app.get('/healthz/instance', (req, res) => res.type('text').send(INSTANCE_TOKEN));
 
 app.get('/app', requireAuth, (req, res) => {
   const links = stmts.linksByOwner.all(req.user.id);
@@ -725,15 +750,29 @@ function loadOwnLink(req, res, next) {
   next();
 }
 
+// Same shape as loadOwnLink above, for the two /app/domains/:id/* routes
+// that redirect-with-flash on a missing id (set-default, delete) – a third
+// (check-reachability) needs a JSON 404 instead and keeps its own inline check.
+function loadDomain(req, res, next) {
+  const domain = stmts.domainById.get(Number(req.params.id));
+  if (!domain) return flashRedirect(res, '/app/domains', 'err', 'Domain nicht gefunden.');
+  req.domain = domain;
+  next();
+}
+
 // Shared by the GET route and the POST .../update failure path (see below)
 // – re-rendering on a validation error needs the exact same stats/audit
 // data as a normal page load, so this avoids computing it twice. `overrides`
 // carries the validation-error extras (error/errorField/values) on the
 // failure path; the plain GET call omits it and gets the normal DB-backed render.
 function renderLinkDetail(req, res, link, overrides = {}) {
+  const ranges = linkStatsRanges(link.id, link.created_at);
   const stats = {
-    total: stmts.clicksTotal.get(link.id).n,
-    ranges: linkStatsRanges(link.id, link.created_at),
+    // ranges.gesamt already sums every click since the link's creation
+    // (its window starts at the creation month) – same number a dedicated
+    // COUNT(*) query would give, no need for a second round-trip.
+    total: ranges.gesamt.total,
+    ranges,
     referrers: stmts.topReferrers.all(link.id),
     devices: stmts.deviceSplit.all(link.id),
     browsers: stmts.browserSplit.all(link.id),
@@ -825,12 +864,6 @@ app.get('/app/org-vault', requireAuth, (req, res) => {
   }));
 });
 
-app.get('/app/org-vault/:slug([A-Za-z0-9\-_]{1,64})/qr.:format(svg|png)', requireAuth, async (req, res) => {
-  const link = stmts.linkBySlug.get(req.params.slug);
-  if (!link || link.visibility !== 'org') return res.status(404).send('Nicht gefunden.');
-  await sendQr(res, shortUrl(link, req), qrOpts(req, `qr-${link.slug}`));
-});
-
 // ---------------------------------------------------------------------------
 // Static QR code generator (content is never stored – and, thanks to POST,
 // never visible in the URL/history/access logs either: the form and
@@ -841,7 +874,7 @@ app.get('/app/qr', requireAuth, (req, res) => {
 });
 
 app.post('/app/qr', requireAuth, async (req, res) => {
-  const type = ['url', 'text', 'wlan', 'epc'].includes(req.body.qr_type) ? req.body.qr_type : 'text';
+  const type = QR_TYPES.includes(req.body.qr_type) ? req.body.qr_type : 'text';
   const ec = EC_BY_TYPE[type];
   const transparentBg = req.body.light_transparent === '1';
   const { dark, light } = qrColors(String(req.body.dark || ''), String(req.body.light || ''), transparentBg);
@@ -861,7 +894,7 @@ app.post('/app/qr', requireAuth, async (req, res) => {
     epc_amount: String(req.body.epc_amount || '').slice(0, 20),
     epc_purpose: String(req.body.epc_purpose || '').slice(0, 140),
   };
-  const content = buildQrTypeContent(req).slice(0, 2000);
+  const content = buildQrTypeContent(req, type).slice(0, 2000);
   let svg = null, error = null;
   if (!content) {
     error = type === 'epc' ? 'Bitte mindestens Begünstigter und eine gültige IBAN angeben.'
@@ -962,17 +995,79 @@ app.post('/app/domains', requireAuth, requireAdmin, (req, res) => {
   flashRedirect(res, '/app/domains', 'ok', `"${origin}" hinzugefügt.`);
 });
 
-app.post('/app/domains/:id/set-default', requireAuth, requireAdmin, (req, res) => {
-  const domain = stmts.domainById.get(Number(req.params.id));
-  if (!domain) return flashRedirect(res, '/app/domains', 'err', 'Domain nicht gefunden.');
-  stmts.setDefaultDomain.run(domain.id);
-  flashRedirect(res, '/app/domains', 'ok', `"${domain.origin}" ist jetzt die Standard-Domain.`);
+app.post('/app/domains/:id/set-default', requireAuth, requireAdmin, loadDomain, (req, res) => {
+  stmts.setDefaultDomain.run(req.domain.id);
+  flashRedirect(res, '/app/domains', 'ok', `"${req.domain.origin}" ist jetzt die Standard-Domain.`);
 });
 
-app.post('/app/domains/:id/delete', requireAuth, requireAdmin, (req, res) => {
+// Manual, on-demand only (never automatic/on page load): DNS/reverse proxy
+// for a freshly added domain are often still being set up, so a check that
+// runs on every page load would just show a false "nicht erreichbar" during
+// that window. Diagnostic aid, not validation – adding a domain never
+// depends on this succeeding.
+//
+// isPrivateOrLinkLocalIp/resolvesToPrivateIp: defense-in-depth against an
+// admin (or a compromised admin session) adding e.g. "http://169.254.169.254"
+// (cloud metadata) or an internal-network host and using the distinguishable
+// outcomes (HTTP status vs. timeout vs. connection failed) as a coarse
+// internal-network probe. Admins already have far more powerful primitives
+// than this, so it's a hardening measure, not a hard security boundary.
+// Loopback (127.0.0.0/8, ::1) is deliberately NOT blocked: it's the same
+// machine snar itself runs on (an admin already has that access some other
+// way in any realistic self-hosted deployment) and it's the legitimate case
+// for a local/dev instance whose own domain points back at itself, like this
+// one during development (BASE_URL=http://localhost:3000).
+function isPrivateOrLinkLocalIp(ip) {
+  const type = net.isIP(ip);
+  if (type === 4) {
+    const [a, b] = ip.split('.').map(Number);
+    return a === 10 || a === 0
+      || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168)
+      || (a === 169 && b === 254)
+      || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (type === 6) {
+    const lower = ip.toLowerCase();
+    if (lower.startsWith('::ffff:')) return isPrivateOrLinkLocalIp(lower.slice(7));
+    return /^f[cd]/.test(lower) || /^fe[89ab]/.test(lower);
+  }
+  return true; // unparsable – reject rather than risk it
+}
+async function resolvesToPrivateIp(hostname) {
+  try {
+    const addrs = await dns.promises.lookup(hostname, { all: true });
+    return addrs.some(a => isPrivateOrLinkLocalIp(a.address));
+  } catch {
+    return false; // let the fetch() below produce the normal DNS-failure message
+  }
+}
+app.post('/app/domains/:id/check-reachability', requireAuth, requireAdmin, async (req, res) => {
   const domain = stmts.domainById.get(Number(req.params.id));
-  if (!domain) return flashRedirect(res, '/app/domains', 'err', 'Domain nicht gefunden.');
-  const fallback = stmts.listDomains.all().find(d => d.id !== domain.id)?.origin || '';
+  if (!domain) return res.status(404).json({ ok: false, reason: 'Domain nicht gefunden.' });
+  const hostname = new URL(domain.origin).hostname;
+  if (await resolvesToPrivateIp(hostname)) {
+    return res.json({ ok: false, reason: 'Zeigt auf eine private/interne Adresse – wird aus Sicherheitsgründen nicht geprüft.' });
+  }
+  try {
+    const response = await fetch(`${domain.origin}/healthz/instance`, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return res.json({ ok: false, reason: `Antwortet mit HTTP ${response.status}.` });
+    const body = (await response.text()).trim();
+    if (body !== INSTANCE_TOKEN) {
+      return res.json({ ok: false, reason: 'Antwortet, zeigt aber nicht auf diese snar-Instanz.' });
+    }
+    return res.json({ ok: true });
+  } catch (err) {
+    const reason = err.name === 'TimeoutError'
+      ? 'Zeitüberschreitung – keine Antwort innerhalb von 5 Sekunden.'
+      : 'Nicht erreichbar (DNS, Verbindung oder TLS-Zertifikat fehlgeschlagen).';
+    return res.json({ ok: false, reason });
+  }
+});
+
+app.post('/app/domains/:id/delete', requireAuth, requireAdmin, loadDomain, (req, res) => {
+  const domain = req.domain;
+  const fallback = stmts.otherDomain.get(domain.id)?.origin || '';
   stmts.reassignLinkDomain.run(fallback, domain.origin); // affected links keep working correctly right away
   stmts.deleteDomain.run(domain.id);
   flashRedirect(res, '/app/domains', 'ok',

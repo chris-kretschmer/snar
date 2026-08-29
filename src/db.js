@@ -111,6 +111,17 @@ function verifyPassword(pw, stored) {
   return hash.length === expected.length && crypto.timingSafeEqual(hash, expected);
 }
 
+// Shared base for every "list of links with owner name + click count" query
+// below (linksByOwner/linksByOwnerPrivate/vaultLinks) – only WHERE/ORDER BY
+// differ between them, so a future change to the click-count join only needs
+// to happen here instead of three times in sync.
+const LINKS_BASE = `
+  SELECT l.*, u.username AS owner_name, COUNT(c.id) AS clicks_total
+  FROM links l
+  LEFT JOIN users u ON u.id = l.owner_id
+  LEFT JOIN clicks c ON c.link_id = l.id
+`;
+
 const stmts = {
   insertUser: db.prepare(`INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)`),
   insertSsoUser: db.prepare(`INSERT INTO users (username, password_hash, role, sso_subject) VALUES (?, '', 'member', ?)`),
@@ -142,35 +153,15 @@ const stmts = {
     SELECT la.*, u.username FROM link_audit la LEFT JOIN users u ON u.id = la.user_id
     WHERE la.link_id = ? ORDER BY la.ts DESC LIMIT 25
   `),
-  linksByOwner: db.prepare(`
-    SELECT l.*, u.username AS owner_name, COUNT(c.id) AS clicks_total
-    FROM links l
-    LEFT JOIN users u ON u.id = l.owner_id
-    LEFT JOIN clicks c ON c.link_id = l.id
-    WHERE l.owner_id = ? GROUP BY l.id ORDER BY l.created_at DESC
-  `),
+  linksByOwner: db.prepare(`${LINKS_BASE} WHERE l.owner_id = ? GROUP BY l.id ORDER BY l.created_at DESC`),
   // Personal vault: only the user's own links with visibility "privat"
   // (the dashboard/"create" view still shows all of the user's own links,
   // including org links).
-  linksByOwnerPrivate: db.prepare(`
-    SELECT l.*, u.username AS owner_name, COUNT(c.id) AS clicks_total
-    FROM links l
-    LEFT JOIN users u ON u.id = l.owner_id
-    LEFT JOIN clicks c ON c.link_id = l.id
-    WHERE l.owner_id = ? AND l.visibility = 'privat' GROUP BY l.id ORDER BY l.created_at DESC
-  `),
+  linksByOwnerPrivate: db.prepare(`${LINKS_BASE} WHERE l.owner_id = ? AND l.visibility = 'privat' GROUP BY l.id ORDER BY l.created_at DESC`),
   // Same click JOIN as linksByOwner: any member may open an org link and see
   // its full stats via "Details" (see canManage in server.js), so the total
   // click count already belongs in the vault overview.
-  vaultLinks: db.prepare(`
-    SELECT l.*, u.username AS owner_name, COUNT(c.id) AS clicks_total
-    FROM links l
-    LEFT JOIN users u ON u.id = l.owner_id
-    LEFT JOIN clicks c ON c.link_id = l.id
-    WHERE l.visibility = 'org'
-    GROUP BY l.id
-    ORDER BY l.title COLLATE NOCASE, l.slug
-  `),
+  vaultLinks: db.prepare(`${LINKS_BASE} WHERE l.visibility = 'org' GROUP BY l.id ORDER BY l.title COLLATE NOCASE, l.slug`),
 
   // Domains (manageable under /app/domains, admin-only). sort_order first,
   // id as a tiebreaker (stable order among equal sort_order, e.g. all left
@@ -180,7 +171,16 @@ const stmts = {
     FROM domains d LEFT JOIN links l ON l.domain = d.origin
     GROUP BY d.id ORDER BY d.sort_order ASC, d.id ASC
   `),
+  // Same order, without the join+aggregate: used everywhere only the origin
+  // strings are needed (getDomains() in server.js, on nearly every
+  // authenticated page) – links.domain has no index, so the full listDomains
+  // join would otherwise scan the entire links table on every request just
+  // to throw the counts away again.
+  listDomainOrigins: db.prepare(`SELECT origin FROM domains ORDER BY sort_order ASC, id ASC`),
   domainById: db.prepare(`SELECT * FROM domains WHERE id = ?`),
+  // Fallback domain when deleting one (see POST /app/domains/:id/delete):
+  // whichever other domain would currently be first/default.
+  otherDomain: db.prepare(`SELECT origin FROM domains WHERE id != ? ORDER BY sort_order ASC, id ASC LIMIT 1`),
   domainExists: db.prepare(`SELECT 1 FROM domains WHERE origin = ?`),
   insertDomain: db.prepare(`INSERT INTO domains (origin) VALUES (?)`),
   deleteDomain: db.prepare(`DELETE FROM domains WHERE id = ?`),
@@ -190,7 +190,6 @@ const stmts = {
   reassignLinkDomain: db.prepare(`UPDATE links SET domain = ? WHERE domain = ?`),
 
   insertClick: db.prepare(`INSERT INTO clicks (link_id, referrer, device, browser, lang) VALUES (?, ?, ?, ?, ?)`),
-  clicksTotal: db.prepare(`SELECT COUNT(*) AS n FROM clicks WHERE link_id = ?`),
   // Time-range buckets in server local time ('localtime' = OS timezone, set
   // in the container via TZ + tzdata): storage stays UTC, but hours/days/
   // months should cut where users actually experience the day – otherwise

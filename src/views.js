@@ -339,7 +339,7 @@ function linkTableRow(l, short, { extraColumn = null } = {}) {
   <td class="muted nowrap" data-label="Erstellt am">${fmtDate(l.created_at)}</td>
   ${extraColumn === 'visibility' ? `<td class="nowrap" data-label="Sichtbarkeit">${visibilityBadge(l)}</td>` : ''}
   <td class="nowrap" data-label="Status">${status}</td>
-  ${extraColumn === 'owner' ? `<td class="muted nowrap" data-label="Erstellt von">${esc(l.owner_name || '–')}</td>` : ''}
+  ${extraColumn === 'owner' ? `<td class="cell-sub" data-label="Erstellt von" title="${esc(l.owner_name || '–')}">${esc(l.owner_name || '–')}</td>` : ''}
   <td class="nowrap short-cell" data-label="Short-Link">
     <button type="button" class="copy-icon-btn" data-copy="${esc(short)}" title="Link kopieren" aria-label="Link kopieren">${icon('copy', 'copy-icon')}</button>
     <a class="slug" href="${esc(short)}" target="_blank" rel="noopener" title="${esc(stripProto(short))}">${esc(stripProto(short))}</a>
@@ -922,6 +922,7 @@ function domainTableRow(d, isDefault, showDefaultControl) {
   <td class="num-cell" data-label="Links">${fmtNum(d.links_count)}</td>
   <td class="nowrap" data-label="">
     <div class="row-actions">
+      <button type="button" class="btn ghost reach-test-btn" data-domain-id="${d.id}">Testen</button>
       ${!isDefault && showDefaultControl ? `<form method="post" action="/app/domains/${d.id}/set-default">
         <button class="btn ghost" type="submit">Als Standard setzen</button>
       </form>` : ''}
@@ -960,7 +961,7 @@ ${adminTabs('domains')}
 <section>
   ${searchTable({
     links: domains,
-    theadHtml: `<th>Domain</th><th style="width:170px;white-space:nowrap">Hinzugefügt am</th><th style="width:70px;white-space:nowrap">Links</th><th></th>`,
+    theadHtml: `<th>Domain</th><th style="width:155px;white-space:nowrap">Hinzugefügt am</th><th style="width:50px;white-space:nowrap">Links</th><th style="width:450px"></th>`,
     rowsHtml: domains.map((d, i) => domainTableRow(d, i === 0, domains.length > 1)).join(''),
     emptyText: 'Keine Domain konfiguriert — Kurzlinks nutzen automatisch die Adresse, unter der die Seite aufgerufen wird.',
     showSearch: false,
