@@ -90,7 +90,6 @@ const ICON = {
   person: `<path fill="currentColor" d="M9.175 10.825Q8 9.65 8 8t1.175-2.825T12 4t2.825 1.175T16 8t-1.175 2.825T12 12t-2.825-1.175M4 20v-2.8q0-.85.438-1.562T5.6 14.55q1.55-.775 3.15-1.162T12 13t3.25.388t3.15 1.162q.725.375 1.163 1.088T20 17.2V20z"/>`,
   settings: `<path fill="currentColor" d="m9.25 22l-.4-3.2q-.325-.125-.612-.3t-.563-.375L4.7 19.375l-2.75-4.75l2.575-1.95Q4.5 12.5 4.5 12.338v-.675q0-.163.025-.338L1.95 9.375l2.75-4.75l2.975 1.25q.275-.2.575-.375t.6-.3l.4-3.2h5.5l.4 3.2q.325.125.613.3t.562.375l2.975-1.25l2.75 4.75l-2.575 1.95q.025.175.025.338v.674q0 .163-.05.338l2.575 1.95l-2.75 4.75l-2.95-1.25q-.275.2-.575.375t-.6.3l-.4 3.2zm2.8-6.5q1.45 0 2.475-1.025T15.55 12t-1.025-2.475T12.05 8.5q-1.475 0-2.488 1.025T8.55 12t1.013 2.475T12.05 15.5"/>`,
   chevron: `<path fill="currentColor" d="m12 21l-4.5-4.5l1.45-1.45L12 18.1l3.05-3.05l1.45 1.45zM8.95 9.05L7.5 7.6L12 3.1l4.5 4.5l-1.45 1.45L12 6z"/>`,
-  'chevron-down': `<path fill="currentColor" d="M11.625 14.913q-.175-.063-.325-.213l-4.6-4.6q-.275-.275-.275-.7t.275-.7t.7-.275t.7.275l3.9 3.9l3.9-3.9q.275-.275.7-.275t.7.275t.275.7t-.275.7l-4.6 4.6q-.15.15-.325.213t-.375.062t-.375-.062"/>`,
   'chevron-left': `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14.5 5 9 12 14.5 19"/>`,
   'chevron-right': `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M9.5 5 15 12 9.5 19"/>`,
   copy: `<path fill="currentColor" d="M9 18q-.825 0-1.412-.587T7 16V4q0-.825.588-1.412T9 2h9q.825 0 1.413.588T20 4v12q0 .825-.587 1.413T18 18zm0-2h9V4H9zm-4 6q-.825 0-1.412-.587T3 20V7q0-.425.288-.712T4 6t.713.288T5 7v13h10q.425 0 .713.288T16 21t-.288.713T15 22zm4-6V4z"/>`,
@@ -111,33 +110,20 @@ const NAV_GROUPS = [
     ],
   },
   {
-    title: 'Admin-Einstellungen',
-    icon: 'settings',
-    accordion: true,
     adminOnly: true,
     items: [
-      { key: 'users', href: '/app/users', label: 'Zugangsverwaltung' },
-      { key: 'domains', href: '/app/domains', label: 'Domainverwaltung' },
+      { key: 'users', href: '/app/users', label: 'Admin-Einstellungen', icon: 'settings', activeKeys: ['users', 'domains'] },
     ],
   },
 ];
 
 function navGroup(group, user, page) {
   if (group.adminOnly && user.role !== 'admin') return '';
-  const activeChild = group.items.some(n => n.key === page);
-  if (group.accordion) {
-    const links = group.items.map(n =>
-      `<a class="navlink sub${page === n.key ? ' active' : ''}" href="${n.href}">${esc(n.label)}</a>`).join('');
-    return `<div class="nav-accordion${activeChild ? ' open' : ''}">
-      <button type="button" class="navlink accordion-toggle" aria-expanded="${activeChild}">
-        ${icon(group.icon)}<span class="label">${esc(group.title)}</span>${icon('chevron-down', 'accordion-chevron')}
-      </button>
-      <div class="accordion-content">${links}</div>
-    </div>`;
-  }
   const title = group.title ? `<div class="group-title">${esc(group.title)}</div>` : '';
-  const links = group.items.map(n =>
-    `<a class="navlink${page === n.key ? ' active' : ''}" href="${n.href}" title="${esc(n.label)}">${icon(n.key)}<span class="label">${esc(n.label)}</span></a>`).join('');
+  const links = group.items.map(n => {
+    const active = (n.activeKeys || [n.key]).includes(page);
+    return `<a class="navlink${active ? ' active' : ''}" href="${n.href}" title="${esc(n.label)}">${icon(n.icon || n.key)}<span class="label">${esc(n.label)}</span></a>`;
+  }).join('');
   return title + links;
 }
 
@@ -158,23 +144,27 @@ function bottomNavItem(n, page) {
   return `<a class="bottom-nav-item${active ? ' active' : ''}" href="${n.href}"${active ? ' aria-current="page"' : ''}>${icon(n.key, 'navicon')}<span>${esc(n.label)}</span></a>`;
 }
 function bottomNav(page, user) {
-  // Admins: Zahnrad + "Admin" statt generischem "Mehr" – der Tap-Grund ist
-  // für sie meist genau das (Icon matcht den Desktop-Accordion, siehe
-  // NAV_GROUPS – "Admin-Einstellungen" selbst bricht bei 10px in der engen
-  // Spalte auf drei Zeilen um, daher hier wie die anderen Tabs gekürzt).
-  // Mitglieder haben keine Admin-Seiten, für sie bleibt es der generische
-  // Sidebar-Zugang (Konto/Abmelden).
+  // Admins: Zahnrad + "Admin" statt generischem "Mehr" – direkter Link auf
+  // die Admin-Einstellungen (ein Tap, analog zum Sidebar-Link, siehe
+  // NAV_GROUPS), statt erst das Sidebar-Overlay zu öffnen. Damit Admins über
+  // diesen direkten Link nicht ihren einzigen mobilen Weg zu "Abmelden"
+  // verlieren (das Dropdown dafür steckt nur im Sidebar-Overlay), gibt es
+  // "Abmelden" zusätzlich direkt auf /app/account, siehe accountPage() –
+  // dorthin führt schon der Profil-Avatar in der mobilen Topbar.
+  // Mitglieder haben keine Admin-Seiten, für sie bleibt "Mehr" der generische
+  // Sidebar-Zugang (Overlay mit Konto/Abmelden).
   const isAdmin = user.role === 'admin';
   const moreActive = page === 'users' || page === 'domains';
-  const moreIcon = isAdmin ? 'settings' : 'menu';
-  const moreLabel = isAdmin ? 'Admin' : 'Mehr';
+  const moreItem = isAdmin
+    ? `<a class="bottom-nav-item${moreActive ? ' active' : ''}" href="/app/users"${moreActive ? ' aria-current="page"' : ''}>${icon('settings', 'navicon')}<span>Admin</span></a>`
+    : `<button type="button" class="bottom-nav-item" id="bottom-nav-more" aria-haspopup="true" aria-controls="sidebar" aria-expanded="false">${icon('menu', 'navicon')}<span>Mehr</span></button>`;
   return `<nav class="bottom-nav" aria-label="Hauptnavigation">
     ${BOTTOM_NAV_LEFT.map(n => bottomNavItem(n, page)).join('')}
     <a class="bottom-nav-create" href="/app" aria-label="Neuen Kurzlink erstellen"${page === 'dashboard' ? ' aria-current="page"' : ''}>
       <span class="bottom-nav-create-circle">${icon('plus', 'bottom-nav-create-icon')}</span>
     </a>
     ${BOTTOM_NAV_RIGHT.map(n => bottomNavItem(n, page)).join('')}
-    <button type="button" class="bottom-nav-item${moreActive ? ' active' : ''}" id="bottom-nav-more" aria-haspopup="true" aria-controls="sidebar" aria-expanded="false">${icon(moreIcon, 'navicon')}<span>${esc(moreLabel)}</span></button>
+    ${moreItem}
   </nav>`;
 }
 
@@ -194,6 +184,9 @@ function layout({ title, body, user = null, flash = null, page = null }) {
 ${user ? `<a class="skip-link" href="#main-content">Zum Inhalt springen</a>
 <div class="mobile-topbar">
   <a class="brand" href="/app"><span translate="no">snar</span></a>
+  <a class="mobile-topbar-account" href="/app/account" aria-label="Konto: ${esc(user.username)}">
+    <span class="avatar">${esc(user.username.slice(0, 1).toUpperCase())}</span>
+  </a>
 </div>` : ''}
 <div class="shell">
 ${user ? `<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
@@ -347,12 +340,12 @@ function linkTableRow(l, short, { extraColumn = null } = {}) {
   ${extraColumn === 'visibility' ? `<td class="nowrap" data-label="Sichtbarkeit">${visibilityBadge(l)}</td>` : ''}
   <td class="nowrap" data-label="Status">${status}</td>
   ${extraColumn === 'owner' ? `<td class="muted nowrap" data-label="Erstellt von">${esc(l.owner_name || '–')}</td>` : ''}
-  <td class="nowrap" data-label="Short-Link">
+  <td class="nowrap short-cell" data-label="Short-Link">
     <button type="button" class="copy-icon-btn" data-copy="${esc(short)}" title="Link kopieren" aria-label="Link kopieren">${icon('copy', 'copy-icon')}</button>
-    <a class="slug" href="${esc(short)}" target="_blank" rel="noopener">${esc(stripProto(short))}</a>
+    <a class="slug" href="${esc(short)}" target="_blank" rel="noopener" title="${esc(stripProto(short))}">${esc(stripProto(short))}</a>
   </td>
   <td class="num-cell" data-label="Klicks">${fmtNum(l.clicks_total)}</td>
-  <td data-label=""><a class="btn ghost" href="/app/links/${l.id}">Details</a></td>
+  <td class="nowrap" data-label=""><a class="btn ghost" href="/app/links/${l.id}">Details</a></td>
 </tr>`;
 }
 
@@ -636,28 +629,28 @@ function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expir
     <div><h3>Browser</h3>${splitBreakdownList(stats.browsers)}</div>
   </div>
   <h3 style="margin-top:20px">Letzte Klicks</h3>
-  ${stats.recent.length ? `<table class="tbl">
-    <thead><tr><th>Zeitpunkt</th><th>Referrer</th><th>Gerät</th><th>Browser</th><th>Sprache</th></tr></thead>
+  ${stats.recent.length ? `<div class="table-scroll" style="border-top:none"><table class="tbl">
+    <thead><tr><th style="width:155px;white-space:nowrap">Zeitpunkt</th><th>Referrer</th><th>Gerät</th><th>Browser</th><th>Sprache</th></tr></thead>
     <tbody>${stats.recent.map(c => `<tr>
       <td class="cell-sub">${fmtDate(c.ts)}</td>
       <td>${esc(c.referrer || '(direkt / QR-Scan)')}</td>
       <td>${esc(c.device)}</td><td>${esc(c.browser)}</td><td>${esc(c.lang || '–')}</td>
     </tr>`).join('')}</tbody>
-  </table>` : `<p class="muted">Noch keine Klicks.</p>`}
+  </table></div>` : `<p class="muted">Noch keine Klicks.</p>`}
 </section>
 
 ${audit.length ? `
 <section class="card">
   <h2>Änderungsverlauf der Ziel-URL</h2>
-  <table class="tbl">
-    <thead><tr><th>Zeitpunkt</th><th>Von</th><th>Alte URL</th><th>Neue URL</th></tr></thead>
+  <div class="table-scroll" style="border-top:none"><table class="tbl">
+    <thead><tr><th style="width:155px;white-space:nowrap">Zeitpunkt</th><th>Von</th><th>Alte URL</th><th>Neue URL</th></tr></thead>
     <tbody>${audit.map(a => `<tr>
       <td class="cell-sub">${fmtDate(a.ts)}</td>
       <td>${esc(a.username || '–')}</td>
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.old_url)}">${esc(a.old_url)}</td>
       <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.new_url)}">${esc(a.new_url)}</td>
     </tr>`).join('')}</tbody>
-  </table>
+  </table></div>
 </section>` : ''}
 
 ${canDelete ? `
@@ -817,7 +810,7 @@ function userTableRow(u, currentUser) {
   const searchHay = esc(u.username).toLowerCase();
   return `
 <tr data-search="${searchHay}">
-  <td class="cell-sub" data-label="Anmeldename">${esc(u.username)}</td>
+  <td class="cell-sub" data-label="Anmeldename" title="${esc(u.username)}">${esc(u.username)}</td>
   <td data-label="Rolle"><span class="badge${u.role === 'admin' ? '' : ' muted'}">${u.role === 'admin' ? 'Admin' : 'Mitglied'}</span></td>
   <td class="muted nowrap" data-label="Erstellt am">${fmtDate(u.created_at)}</td>
   <td class="muted nowrap" data-label="Letzter Login am">${fmtDate(u.last_login_at)}</td>
@@ -831,6 +824,21 @@ function userTableRow(u, currentUser) {
 </tr>`;
 }
 
+// Zwei eigenständige Seiten (/app/users, /app/domains) unter einem gemeinsamen
+// Titel – echte Links statt Client-Toggle, damit Zurück/Vorwärts und direkte
+// URLs funktionieren.
+function adminTabs(page) {
+  const tabs = [
+    ['users', '/app/users', 'Zugangsverwaltung'],
+    ['domains', '/app/domains', 'Domainverwaltung'],
+  ];
+  return `<div class="tab-group" role="tablist" aria-label="Admin-Einstellungen">
+    ${tabs.map(([key, href, label]) =>
+      `<a class="tab-link${page === key ? ' active' : ''}" href="${href}"${page === key ? ' aria-current="page"' : ''}>${esc(label)}</a>`
+    ).join('')}
+  </div>`;
+}
+
 // error/errorField/values: only set on the direct re-render after a failed
 // POST /app/users (see server.js) – same principle as dashboard() above.
 // Password is deliberately never part of `values` – re-echoing a rejected
@@ -840,7 +848,8 @@ function usersPage({ users, user, flash, error = null, errorField = null, values
   const body = `
 <main>
 <div class="page">
-<h1>Zugangsverwaltung</h1>
+<h1>Admin-Einstellungen</h1>
+${adminTabs('users')}
 
 <section class="card">
   <h2>Account anlegen</h2>
@@ -908,16 +917,18 @@ function domainTableRow(d, isDefault, showDefaultControl) {
   const searchHay = esc(stripProto(d.origin)).toLowerCase();
   return `
 <tr data-search="${searchHay}">
-  <td class="cell-sub" data-label="Domain">${esc(stripProto(d.origin))}${isDefault && showDefaultControl ? ' <span class="badge">Standard</span>' : ''}</td>
+  <td class="cell-sub" data-label="Domain" title="${esc(stripProto(d.origin))}">${esc(stripProto(d.origin))}${isDefault && showDefaultControl ? ' <span class="badge">Standard</span>' : ''}</td>
   <td class="muted nowrap" data-label="Hinzugefügt am">${fmtDate(d.created_at)}</td>
   <td class="num-cell" data-label="Links">${fmtNum(d.links_count)}</td>
   <td class="nowrap" data-label="">
-    ${!isDefault && showDefaultControl ? `<form method="post" action="/app/domains/${d.id}/set-default" class="inline" style="margin-right:8px">
-      <button class="btn ghost" type="submit">Als Standard setzen</button>
-    </form>` : ''}
-    <form method="post" action="/app/domains/${d.id}/delete" class="inline" data-confirm-modal="${esc(`„${stripProto(d.origin)}" wird entfernt. Alle Links, die aktuell darüber laufen, werden automatisch auf eine andere konfigurierte Domain umgestellt — kein gedruckter QR-Code bricht dadurch, der Redirect selbst prüft die Domain ohnehin nicht. Diese Aktion lässt sich nicht rückgängig machen.`)}">
-      <button class="destructive-ghost" type="submit">Entfernen</button>
-    </form>
+    <div class="row-actions">
+      ${!isDefault && showDefaultControl ? `<form method="post" action="/app/domains/${d.id}/set-default">
+        <button class="btn ghost" type="submit">Als Standard setzen</button>
+      </form>` : ''}
+      <form method="post" action="/app/domains/${d.id}/delete" data-confirm-modal="${esc(`„${stripProto(d.origin)}" wird entfernt. Alle Links, die aktuell darüber laufen, werden automatisch auf eine andere konfigurierte Domain umgestellt — kein gedruckter QR-Code bricht dadurch, der Redirect selbst prüft die Domain ohnehin nicht. Diese Aktion lässt sich nicht rückgängig machen.`)}">
+        <button class="destructive-ghost" type="submit">Entfernen</button>
+      </form>
+    </div>
   </td>
 </tr>`;
 }
@@ -929,7 +940,8 @@ function domainsPage({ domains, user, flash, error = null, errorField = null, va
   const body = `
 <main>
 <div class="page">
-<h1>Domainverwaltung</h1>
+<h1>Admin-Einstellungen</h1>
+${adminTabs('domains')}
 
 <section class="card">
   <form method="post" action="/app/domains" class="grid-form">
@@ -948,7 +960,7 @@ function domainsPage({ domains, user, flash, error = null, errorField = null, va
 <section>
   ${searchTable({
     links: domains,
-    theadHtml: `<th>Domain</th><th>Hinzugefügt am</th><th>Links</th><th></th>`,
+    theadHtml: `<th>Domain</th><th style="width:170px;white-space:nowrap">Hinzugefügt am</th><th style="width:70px;white-space:nowrap">Links</th><th></th>`,
     rowsHtml: domains.map((d, i) => domainTableRow(d, i === 0, domains.length > 1)).join(''),
     emptyText: 'Keine Domain konfiguriert — Kurzlinks nutzen automatisch die Adresse, unter der die Seite aufgerufen wird.',
     showSearch: false,
@@ -978,6 +990,12 @@ function accountPage({ user, flash }) {
     <button type="submit">Passwort ändern</button>
   </form>
   <p class="muted" style="margin-top:15px;line-height:1.55">Nur gegen aktuelles Passwort möglich. Andere Geräte werden dabei abgemeldet — dieses bleibt angemeldet.</p>`}
+</section>
+<section class="card" style="max-width:400px">
+  <h2>Sitzung</h2>
+  <form method="post" action="/logout">
+    <button type="submit" class="btn ghost">Abmelden</button>
+  </form>
 </section>
 </div>
 </main>`;

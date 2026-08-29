@@ -1,5 +1,5 @@
 // The only client-side JS: custom dropdown & datepicker, copy buttons,
-// delete confirmation, search/pagination, nav accordion, profile menu,
+// delete confirmation, search/pagination, profile menu,
 // stats chart time ranges. Everything else is rendered server-side.
 
 // Close a popover on a click outside the wrapper, or on Escape.
@@ -489,60 +489,51 @@ document.querySelectorAll('[data-confirm-slug]').forEach((input) => {
 
 // Mobile sidebar: below the sidebar breakpoint (see style.css) the same
 // sidebar markup becomes an off-canvas overlay instead of vanishing
-// entirely, opened via the "Mehr" tab in the bottom nav (Account/Admin-
-// Einstellungen live here, the four primary destinations have their own
-// direct links in .bottom-nav now). Closes on a backdrop click or Escape;
-// a nav link click doesn't need its own handler – it's a full page load,
-// so the 'open' state never carries over anyway.
+// entirely, opened via the "Mehr" tab in the bottom nav (Konto lives there
+// too, plus Admin-Einstellungen for members without their own direct link –
+// admins get a direct "Admin" link instead, see bottomNav() in views.js, so
+// they never open this overlay at all). Closes on a backdrop click or
+// Escape; a nav link click doesn't need its own handler – it's a full page
+// load, so the 'open' state never carries over anyway.
 const menuToggle = document.getElementById('bottom-nav-more');
 const sidebar = document.getElementById('sidebar');
 const sidebarBackdrop = document.getElementById('sidebar-backdrop');
-if (menuToggle && sidebar && sidebarBackdrop) {
+if (sidebar) {
   // Below the breakpoint, a closed sidebar is only moved off-screen
   // (transform) – still fully focusable otherwise, so keyboard/screen-reader
   // users would tab straight into invisible nav links. inert removes it from
   // the tab order/AT tree whenever it's actually hidden (closed + mobile).
+  // Kept outside the menuToggle branch below: admins have no toggle button
+  // at all (their overlay can never be opened), but still need it inert
+  // while off-canvas.
   const mobileNavQuery = window.matchMedia('(max-width: 760px)');
   const syncInert = () => { sidebar.inert = mobileNavQuery.matches && !sidebar.classList.contains('open'); };
-  const closeSidebar = ({ restoreFocus = false } = {}) => {
-    sidebar.classList.remove('open');
-    sidebarBackdrop.classList.remove('open');
-    document.body.classList.remove('sidebar-open-lock');
-    menuToggle.setAttribute('aria-expanded', 'false');
-    syncInert();
-    if (restoreFocus) menuToggle.focus();
-  };
-  menuToggle.addEventListener('click', () => {
-    const open = sidebar.classList.toggle('open');
-    sidebarBackdrop.classList.toggle('open', open);
-    document.body.classList.toggle('sidebar-open-lock', open);
-    menuToggle.setAttribute('aria-expanded', String(open));
-    syncInert();
-    if (open) sidebar.querySelector('.account-trigger, .navlink')?.focus();
-  });
-  sidebarBackdrop.addEventListener('click', () => closeSidebar({ restoreFocus: true }));
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && sidebar.classList.contains('open')) closeSidebar({ restoreFocus: true });
-  });
   mobileNavQuery.addEventListener('change', syncInert);
   syncInert();
-}
 
-// Nav accordion (e.g. "Admin-Einstellungen"): expand/collapse on click.
-// Collapsed content only shrinks visually via max-height (see style.css) –
-// its <a> links would otherwise stay reachable by Tab/AT while invisible,
-// so `inert` additionally pulls them out of the tab order/AT tree, same
-// technique as the mobile sidebar further below.
-document.querySelectorAll('.nav-accordion > .accordion-toggle').forEach((btn) => {
-  const group = btn.parentElement;
-  const content = group.querySelector('.accordion-content');
-  content.inert = !group.classList.contains('open');
-  btn.addEventListener('click', () => {
-    const open = group.classList.toggle('open');
-    btn.setAttribute('aria-expanded', String(open));
-    content.inert = !open;
-  });
-});
+  if (menuToggle && sidebarBackdrop) {
+    const closeSidebar = ({ restoreFocus = false } = {}) => {
+      sidebar.classList.remove('open');
+      sidebarBackdrop.classList.remove('open');
+      document.body.classList.remove('sidebar-open-lock');
+      menuToggle.setAttribute('aria-expanded', 'false');
+      syncInert();
+      if (restoreFocus) menuToggle.focus();
+    };
+    menuToggle.addEventListener('click', () => {
+      const open = sidebar.classList.toggle('open');
+      sidebarBackdrop.classList.toggle('open', open);
+      document.body.classList.toggle('sidebar-open-lock', open);
+      menuToggle.setAttribute('aria-expanded', String(open));
+      syncInert();
+      if (open) sidebar.querySelector('.account-trigger, .navlink')?.focus();
+    });
+    sidebarBackdrop.addEventListener('click', () => closeSidebar({ restoreFocus: true }));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && sidebar.classList.contains('open')) closeSidebar({ restoreFocus: true });
+    });
+  }
+}
 
 // Profile dropdown: open/close via the trigger, close on a click outside
 // it or on a menu item.
