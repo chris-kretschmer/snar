@@ -364,18 +364,13 @@ function dashboard({ links, shortUrl, domains, user, flash, error = null, errorF
   ${error && !errorField ? `<div class="flash error">${esc(error)}</div>` : ''}
   <form method="post" action="/app/links" style="display:flex;flex-direction:column;gap:20px">
     <div class="grid-form">
-      <div class="field">
+      <div class="field grow">
         <label for="target">Ziel-URL</label>
         <!-- type="text" instead of type="url": browsers reject type="url"
              input without a scheme (e.g. "example.com") natively, before
              readLinkFields() in server.js can prepend "https://". -->
         <input id="target" name="target_url" type="text" placeholder="https://…" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required>
         ${fieldErrorSpan('target_url', errorField, error, 'target')}
-      </div>
-      <div class="field">
-        <label for="slug">Wunsch-Kürzel <span class="muted">(optional)</span></label>
-        <input id="slug" name="slug" type="text" pattern="[A-Za-z0-9\\-_]{1,64}" placeholder="sommerfest…" value="${esc(v.slug)}"${fieldInvalidAttrs('slug', errorField, 'slug')} spellcheck="false">
-        ${fieldErrorSpan('slug', errorField, error, 'slug')}
       </div>
     </div>
     <div class="grid-form">
@@ -385,6 +380,11 @@ function dashboard({ links, shortUrl, domains, user, flash, error = null, errorF
       </div>
     </div>
     <div class="grid-form">
+      <div class="field">
+        <label for="slug">Wunsch-Kürzel <span class="muted">(optional)</span></label>
+        <input id="slug" name="slug" type="text" pattern="[A-Za-z0-9\\-_]{1,64}" placeholder="sommerfest…" value="${esc(v.slug)}"${fieldInvalidAttrs('slug', errorField, 'slug')} spellcheck="false">
+        ${fieldErrorSpan('slug', errorField, error, 'slug')}
+      </div>
       ${domainField(v.domain, domains)}
       <div class="field">
         <label for="expires_at">Läuft ab <span class="muted">(optional)</span></label>

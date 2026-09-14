@@ -14,7 +14,7 @@ snar ist ein selbst gehostetes Kurzlink-Tool mit dynamischen QR-Codes: Jeder Lin
 - **Sichtbarkeit pro Link** – „Persönlich“ (nur Besitzer:in und Admins) oder „Organisation“: Org-Links gehören dem ganzen Team, erscheinen im Gemeinsamen Tresor, und jedes angemeldete Mitglied darf sie bearbeiten und mit voller Klick-Statistik einsehen – „Erstellt von“ ist dabei rein informativ und schränkt nichts ein. Löschen und die Sichtbarkeit ändern bleiben Besitzer:in/Admin vorbehalten.
 - **Domain-Verwaltung** – Kurz-Domains werden in der App verwaltet (`/app/domains`, nur Admins), nicht in der Konfiguration – Hinzufügen/Entfernen wirkt sofort, kein Neustart nötig. Die erste in der Liste ist die Standard-Domain für neue Links. Eine Domain zu entfernen stellt betroffene Links automatisch auf eine andere um, kein gedruckter QR-Code bricht dadurch.
 - **Auth** – Signierte HttpOnly-Sessions (30 Tage, sofort ungültig bei Nutzerlöschung oder Passwortwechsel – dabei werden gezielt alle anderen Geräte abgemeldet, das aktuelle bleibt angemeldet), Login-Rate-Limit. Optional **SSO über OIDC** (z. B. Authentik) als zusätzlicher Login-Weg neben Nutzername/Passwort – der erste erfolgreiche SSO-Login legt automatisch einen Account als „Mitglied“ an, Admin-Rechte bleiben weiterhin nur manuell vergebbar.
-- **Ein Container, eine SQLite-Datei** (`/data/snar.db`, WAL-Modus) – Backup = eine Datei sichern.
+- **Ein Container, eine SQLite-Datei** (`/data/snar.db`, WAL-Modus) – siehe „Wichtig zu wissen“ für den sicheren Backup-Befehl.
 
 ## Voraussetzungen
 
@@ -59,7 +59,12 @@ Gemessen: Leerlauf ~66 MB RSS, unter Dauerlast ~110 MB, CPU im Leerlauf null. Ei
 ## Wichtig zu wissen
 
 - **Kurz-Domain nie wechseln**, sobald QR-Codes gedruckt sind – die URL ist fest im gedruckten QR-Code kodiert. Nur das *Ziel* ist dynamisch.
-- **Reverse Proxy**: `trust proxy` ist auf `'loopback'` gesetzt – das erkennt nur echte Loopback-Adressen (`127.0.0.1`). Das funktioniert automatisch nur beim [Betrieb ohne Docker](#ohne-docker), wenn Proxy und snar beide nativ auf demselben Host laufen. Bei der (empfohlenen) Docker-Variante kommt ein Reverse Proxy, der über den veröffentlichten Port verbindet (egal ob nativ auf dem Host installiert oder als eigener Docker-Container), bei snar stattdessen als Docker-Bridge-Gateway-IP an (z. B. `172.17.0.1`) – `'loopback'` erkennt diesen Fall *nicht* automatisch, das `Secure`-Cookie-Flag bliebe dann trotz TLS-Terminierung durch den Proxy deaktiviert. In dem Fall muss in `src/server.js` statt `'loopback'` die konkrete IP/CIDR der Docker-Bridge (`docker network inspect bridge`) oder des Proxy-Containers eingetragen werden.
+- **Reverse Proxy**: `trust proxy` vertraut standardmäßig Loopback- sowie privaten/Link-lokalen Adressen (`127.0.0.1`, Docker-Bridge-Netze wie `172.17.0.0/12`, `10.0.0.0/8`, `192.168.0.0/16`, …) – deckt damit sowohl den [Betrieb ohne Docker](#ohne-docker) (Proxy nativ auf demselben Host) als auch die typische Docker-Variante ab, bei der ein Reverse Proxy als eigener Container im selben Compose-Netz läuft. Ohne diese Erkennung bliebe das `Secure`-Cookie-Flag trotz TLS-Terminierung durch den Proxy deaktiviert. Nur wenn der Proxy den Traffic über eine öffentliche Adresse einliefert (z. B. Cloudflare Tunnel, externer Load Balancer), zusätzlich `TRUSTED_PROXIES` mit der/den konkreten IP(s)/CIDR(s) setzen (kommagetrennt).
+- **Backup**: Die SQLite-Datei läuft im WAL-Modus – ein einfaches `cp` oder ein Datei-Level-Snapshot des Docker-Volumes kann dabei eine inkonsistente Momentaufnahme erwischen (Haupt- und WAL-Datei nicht synchron), was beim Sichern unauffällig aussieht und erst beim Restore auffällt. Das Laufzeit-Image enthält kein `sqlite3`-CLI, aber `better-sqlite3`s eingebaute Online-Backup-API, die auch gegen die laufende Datenbank sicher ist:
+  ```bash
+  docker exec snar node -e "require('better-sqlite3')('/data/snar.db',{readonly:true}).backup('/data/backup-'+new Date().toISOString().slice(0,10)+'.db')"
+  ```
+  Danach die erzeugte `backup-*.db` regelmäßig aus dem Volume herausziehen (z. B. `docker cp`) und extern ablegen. Zeitplan, Aufbewahrung und Offsite-Ablage sind bewusst nicht Teil von snar – das hängt zu stark von der jeweiligen Infrastruktur ab (Cron, Portainer, Systemd-Timer, …) und wird dort eingerichtet.
 
 ## Projektstruktur
 

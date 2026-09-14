@@ -95,18 +95,21 @@ function normalizeDomain(input) {
 
 const app = express();
 app.disable('x-powered-by');
-// 'loopback' instead of true: only trusts X-Forwarded-* headers from a
-// proxy connecting via true loopback (127.0.0.1). A reverse proxy reaching
-// this container through the published Docker port (whether running
-// natively on the host or as another container) arrives as the Docker
-// bridge gateway IP instead (e.g. 172.17.0.1), not loopback – in that case
-// this setting must be changed to that concrete IP/CIDR (see README,
-// "Reverse Proxy"), or requests won't be trusted at all. "true" would let
-// ANY client freely spoof req.ip via a self-set X-Forwarded-For header –
-// that made the IP-based login rate limiter below trivial to bypass (every
-// attempt = a new "IP" = a new counter) – so never fall back to a blanket
-// "true" to work around this.
-app.set('trust proxy', 'loopback');
+// Named ranges instead of true (same defaults as Immich's reverse-proxy
+// setup): trusts X-Forwarded-* headers from loopback plus private/
+// link-local addresses, which covers both a same-host proxy and a reverse
+// proxy running as another container in the same Docker network (its
+// gateway IP, e.g. 172.17.0.1, falls under "uniquelocal") – no extra
+// config needed for the common cases. TRUSTED_PROXIES (comma-separated
+// IPs/CIDRs) can extend this for a proxy reachable only via a public
+// address (see README, "Reverse Proxy"). "true" would let ANY client
+// freely spoof req.ip via a self-set X-Forwarded-For header – that made
+// the IP-based login rate limiter below trivial to bypass (every attempt =
+// a new "IP" = a new counter) – so never fall back to a blanket "true".
+const TRUSTED_PROXIES = process.env.TRUSTED_PROXIES
+  ? process.env.TRUSTED_PROXIES.split(',').map(s => s.trim()).filter(Boolean)
+  : [];
+app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal', ...TRUSTED_PROXIES]);
 // Security headers (pentest recommendation). style-src allows
 // 'unsafe-inline' because views.js uses style="..." attributes in many
 // places for small layout details (no <script> equivalent, can't execute
@@ -1050,7 +1053,17 @@ app.post('/app/domains/:id/check-reachability', requireAuth, requireAdmin, async
     return res.json({ ok: false, reason: 'Zeigt auf eine private/interne Adresse – wird aus Sicherheitsgründen nicht geprüft.' });
   }
   try {
-    const response = await fetch(`${domain.origin}/healthz/instance`, { signal: AbortSignal.timeout(5000) });
+    // redirect: 'manual' – sonst würde fetch() einem 3xx automatisch folgen
+    // und die Private-IP-Prüfung oben liefe ins Leere: ein öffentlich
+    // erreichbarer Server könnte per Redirect auf eine interne Adresse (oder
+    // Cloud-Metadata) zeigen, ohne dass der ursprüngliche Hostname das
+    // verraten würde. Diagnose-Hilfsmittel, keine Weiterleitung nötig – das
+    // eigentliche Kurzlink-Redirect läuft im Browser der Endnutzer:innen,
+    // nicht über diesen Check.
+    const response = await fetch(`${domain.origin}/healthz/instance`, { signal: AbortSignal.timeout(5000), redirect: 'manual' });
+    if (response.status >= 300 && response.status < 400) {
+      return res.json({ ok: false, reason: 'Antwortet mit einer Weiterleitung – wird aus Sicherheitsgründen nicht automatisch verfolgt.' });
+    }
     if (!response.ok) return res.json({ ok: false, reason: `Antwortet mit HTTP ${response.status}.` });
     const body = (await response.text()).trim();
     if (body !== INSTANCE_TOKEN) {

@@ -27,6 +27,11 @@ services:
       # – this variable is then ignored. Multiple domains: comma-separated.
       BASE_URL: "${BASE_URL:-https://example.com}"
       # DOMAINS: "https://example.com,https://kurz.example.com"
+      # Optional: only needed if a reverse proxy reaches snar via a
+      # non-private address (e.g. through a tunnel service) – see README,
+      # "Reverse Proxy". The default already covers a proxy on the same
+      # host or as another container in this compose network.
+      # TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
       # Optional: SSO login via OIDC (e.g. Authentik) in addition to
       # password login. Only active once all three variables are set.
       # Register the redirect URI with the provider: <domain>/login/sso/callback

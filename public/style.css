@@ -7,6 +7,18 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
+/* Swiss / International Typographic Style: Raster, Typografie als
+   Hierarchie-Mittel statt Dekoration, dünne Linien statt Schatten, keine
+   Rundungen, Farbe nur sparsam (Akzent-Blau bleibt, sonst Schwarz/Weiß/Grau).
+   --radius* bleiben als Tokens bestehen (0), damit keine der ~40
+   Verwendungsstellen einzeln angefasst werden muss – ein Wertwechsel hier
+   würde bei Bedarf wieder Rundungen zurückbringen. --shadow ist bewusst
+   "none": flache Flächen (Karten, Tabellenzeilen) bekommen ihre Kontur über
+   den ohnehin vorhandenen border, keinen zusätzlichen Weichzeichner.
+   --shadow-hover bleibt als einzige, stark reduzierte Schatten-Variante für
+   tatsächlich schwebende Ebenen (Popover, Dialog, mobile Sidebar) – ohne
+   jeden Tiefenhinweis wäre dort nicht mehr erkennbar, dass sie über dem
+   Seiteninhalt liegen. */
 :root {
   --bg: #f7f8fa;
   --surface: #ffffff;
@@ -16,32 +28,33 @@
   /* #6b7280 statt des ursprünglichen #8a90a0 – Letzteres lag bei nur 3,19:1
      Kontrast auf Weiß, unter dem WCAG-AA-Minimum (4,5:1) für Normaltext, wurde
      aber an vielen Stellen genau dafür verwendet (Tabellenköpfe, h3-Labels,
-     "← Zurück" etc.). Neuer Wert: ~4,83:1 auf Weiß, ~4,55:1 auf --bg. */
+     "← Zurück" etc.). Dieser Wert bleibt aus der Kontrast-Fixrunde
+     unverändert: ~4,83:1 auf Weiß, ~4,55:1 auf --bg. */
   --muted2: #6b7280;
   /* Bleibt bewusst niedrigkontrastig (2,3:1) – nur noch für Fälle, die WCAG
      1.4.3 explizit ausnimmt (deaktivierte Controls) oder die rein dekorativ/
      untergeordnet sind (ausgegraute Kalendertage außerhalb des Monats). Echte
-     Textstellen, die vorher --muted3 nutzten, laufen jetzt über --muted2. */
+     Textstellen, die vorher --muted3 nutzten, laufen über --muted2. */
   --muted3: #a6abb8;
-  --line: #e4e7ee;
-  --line2: #eef0f5;
+  --line: #0e1220;
+  --line2: #d9dbe0;
   --accent: #2140c8;
   --accent-hover: #1a339f;
   --accent-ink: #ffffff;
   --accent-soft: #eef1fc;
-  --accent-soft-border: #c9d3f4;
+  --accent-soft-border: #2140c8;
   --accent-focus: #dfe5fa;
   --danger: #b3261e;
-  --danger-border: #e8b9b5;
-  --danger-soft-border: #f2d4d1;
+  --danger-border: #b3261e;
+  --danger-soft-border: #b3261e;
   --danger-soft: #fbecec;
   --success: #1a7a42;
   --success-soft: #e7f4ec;
-  --radius: 14px;
-  --radius-sm: 9px;
-  --radius-xs: 8px;
-  --shadow: 0 1px 2px rgba(14, 18, 32, .04);
-  --shadow-hover: 0 4px 16px rgba(14, 18, 32, .08);
+  --radius: 0px;
+  --radius-sm: 0px;
+  --radius-xs: 0px;
+  --shadow: none;
+  --shadow-hover: 0 2px 10px rgba(14, 18, 32, .14);
   --sans: 'Open Sans', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 }
 
@@ -63,13 +76,13 @@ a, button, .btn, input, select, textarea { touch-action: manipulation; -webkit-t
      dauerhaft ein 1px-Streifen oben ins Bild statt komplett unsichtbar zu
      sein, bis der Link per Tab fokussiert wird. -100px lässt genug Puffer. */
   position: absolute; top: -100px; left: 8px; z-index: 100;
-  background: var(--accent); color: var(--accent-ink);
+  background: var(--ink); color: var(--surface);
   padding: 10px 16px; border-radius: var(--radius-sm);
-  text-decoration: none; font-weight: 600; font-size: 13.5px;
+  text-decoration: none; font-weight: 700; font-size: 13.5px;
 }
 .skip-link:focus { top: 8px; }
 body {
-  margin: 0; background: var(--bg); color: var(--ink);
+  margin: 0; background: var(--surface); color: var(--ink);
   font: 16px/1.55 var(--sans);
 }
 main { padding: 36px 32px 56px; }
@@ -98,7 +111,7 @@ main { padding: 36px 32px 56px; }
 }
 .avatar {
   flex: none; width: 26px; height: 26px; border-radius: 50%;
-  background: var(--accent-soft); color: var(--accent);
+  background: var(--ink); color: var(--surface);
   display: flex; align-items: center; justify-content: center;
   font-size: 12px; font-weight: 700;
 }
@@ -106,7 +119,7 @@ main { padding: 36px 32px 56px; }
   width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px;
   background: transparent; border: none; cursor: pointer; border-radius: var(--radius-xs);
 }
-.account-trigger:hover { background: var(--line2); }
+.account-trigger:hover { background: var(--bg); }
 .chevron-icon { width: 14px; height: 14px; flex: none; margin-left: auto; color: var(--muted2); }
 /* Shared popover base (account menu, custom-select menu, datetime panel
    below): display:none→block, participating in the fade via allow-discrete
@@ -115,10 +128,12 @@ main { padding: 36px 32px 56px; }
    which can cause page overflow depending on where the trigger sits.
    Positioning/z-index/padding and any extra per-popover rules (max-height,
    width, .align-right, …) stay with each one below; only what's genuinely
-   identical across all three lives here. */
+   identical across all three lives here. border ist hier bewusst dunkler/
+   dicker als das sonstige --line-Grau (kräftige Kontur statt Schatten als
+   Haupt-Tiefenhinweis, siehe --shadow-hover-Kommentar oben). */
 .account-menu, .custom-select-menu, .custom-datetime-panel {
   display: none; position: absolute; z-index: 20;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); border: 1px solid var(--ink); border-radius: var(--radius-sm);
   box-shadow: var(--shadow-hover);
   opacity: 0;
   transition: opacity .15s ease, display .15s allow-discrete;
@@ -143,24 +158,27 @@ main { padding: 36px 32px 56px; }
   padding: 8px 10px; border-radius: var(--radius-xs);
   font-size: 13.5px; font-weight: 500; color: var(--ink); cursor: pointer;
 }
-.account-menu a:hover, .account-menu button:hover { background: var(--accent-soft); color: var(--accent); }
+.account-menu a:hover, .account-menu button:hover { background: var(--ink); color: var(--surface); }
 .account-menu form { margin: 0; }
 .menu-icon { width: 16px; height: 16px; flex: none; }
 .sidenav { display: flex; flex-direction: column; gap: 2px; }
 .sidenav .group-title {
   margin: 16px 0 2px; padding: 0 12px;
-  font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
   color: var(--muted2); white-space: nowrap; overflow: hidden;
 }
 .sidenav .group-title:first-child { margin-top: 0; }
+/* Aktiv-Zustand über eine kräftige linke Linie statt Flächenfüllung – Swiss-
+   typischer, spart die einzige Verwendung von --accent-soft im Nav weg. */
 .navlink {
   display: flex; align-items: center; gap: 10px;
   color: var(--muted); text-decoration: none; white-space: nowrap;
-  padding: 8px 12px; border-radius: var(--radius-xs);
+  padding: 8px 12px 8px 9px; border-radius: var(--radius-xs);
+  border-left: 3px solid transparent;
   font-size: 14px; font-weight: 500;
 }
 .navlink:hover { color: var(--ink); }
-.navlink.active { color: var(--accent); font-weight: 600; background: var(--accent-soft); }
+.navlink.active { color: var(--ink); font-weight: 700; background: transparent; border-left-color: var(--accent); }
 .navicon { width: 16px; height: 16px; flex: none; }
 
 .who-chip { min-width: 0; font-size: 13px; color: var(--ink); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -168,36 +186,38 @@ main { padding: 36px 32px 56px; }
 
 /* Karten & Layout */
 /* Kein Außenmargin: Abstände zwischen Karten steuern die Seiten-Layouts
-   über ihre Flex-Gaps (22px), sonst addieren sich Margin und Gap. */
+   über ihre Flex-Gaps (22px), sonst addieren sich Margin und Gap. Kontur
+   kommt allein vom border – --shadow ist "none", siehe Kommentar oben. */
 .card {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 24px; box-shadow: var(--shadow);
 }
-.card.danger { border-color: var(--danger-soft-border); box-shadow: none; }
+.card.danger { border-color: var(--danger); box-shadow: none; }
 /* minmax(0, 1fr): see the comment at .detail-grid – same shrink trap. */
 .cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .hero { margin: 0; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
-h1 { font-size: 26px; letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
-/* 17px statt 15px – vorher nur 1,5px über dem 13,5px-Fließtext, kaum als
-   Abschnitts-Überschrift wahrnehmbar (z. B. "Bearbeiten"/"Statistik"/
-   "Änderungsverlauf" auf der Detailseite hintereinander). */
-h2 { font-size: 17px; font-weight: 600; color: var(--ink); margin: 0 0 12px; text-transform: none; letter-spacing: 0; text-wrap: balance; }
-h3 { font-size: 12px; font-weight: 600; color: var(--muted2); text-transform: uppercase; letter-spacing: .05em; margin: 0; }
+h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.03em; margin: 0; text-wrap: balance; }
+/* 17px, deutlich fetter als der 13,5px-Fließtext daneben – Abschnitts-
+   Überschriften tragen die Hierarchie in diesem Stil allein über Typografie
+   (kein Kartenrahmen-Kontrast mehr nötig, um sie abzusetzen). */
+h2 { font-size: 17px; font-weight: 700; color: var(--ink); margin: 0 0 12px; text-transform: none; letter-spacing: -0.01em; text-wrap: balance; }
+h3 { font-size: 11px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .1em; margin: 0; }
 .muted { color: var(--muted2); }
 
-/* Formulare */
-label { display: block; font-size: 12.5px; font-weight: 600; color: var(--label); margin-bottom: 6px; }
+/* Formulare: Unterstrich statt umschlossener Box – Eingabefelder lesen sich
+   als Teil des Rasters, nicht als eigene "Container"-Elemente. */
+label { display: block; font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 7px; }
 input, select, textarea {
-  width: 100%; padding: 9px 11px; font: inherit; font-size: 13.5px; color: var(--ink);
-  background: #fff; border: 1px solid #dde1ea; border-radius: var(--radius-sm);
+  width: 100%; padding: 0 0 8px; font: inherit; font-size: 14px; color: var(--ink);
+  background: transparent; border: none; border-bottom: 2px solid var(--line2); border-radius: 0;
 }
 /* Inline-Feld-Fehler (siehe dashboard()/linkDetail()/usersPage()/
    domainsPage() in views.js) – sitzt direkt unter dem betroffenen Feld
    statt nur als generisches Seiten-Banner. */
 .field-error { display: block; margin-top: 6px; font-size: 12.5px; color: var(--danger); }
-input.invalid, textarea.invalid { border-color: var(--danger); }
-input.invalid:focus-visible { outline-color: var(--danger); }
+input.invalid, textarea.invalid { border-bottom-color: var(--danger); }
+input.invalid:focus-visible { box-shadow: 0 2px 0 0 var(--danger); }
 /* Chrome/Edge erzwingen bei Autofill/Autocomplete eine eigene (blaue)
    Hintergrundfarbe, die sich per background-color nicht überschreiben lässt –
    nur der klassische box-shadow-inset-Trick gewinnt zuverlässig dagegen. */
@@ -209,12 +229,12 @@ input:-webkit-autofill:focus, input:-webkit-autofill:active {
   caret-color: var(--ink);
   transition: background-color 5000s ease-in-out 0s;
 }
-textarea { font-size: 13px; resize: vertical; }
+textarea { font-size: 13px; resize: vertical; padding-top: 8px; border: 1px solid var(--line2); padding-left: 10px; padding-right: 10px; }
 select {
   appearance: none; -webkit-appearance: none; -moz-appearance: none;
-  padding-right: 38px; cursor: pointer;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%235a6172'%3E%3Cpath d='M11.625 14.913q-.175-.063-.325-.213l-4.6-4.6q-.275-.275-.275-.7t.275-.7t.7-.275t.7.275l3.9 3.9l3.9-3.9q.275-.275.7-.275t.7.275t.275.7t-.275.7l-4.6 4.6q-.15.15-.325.213t-.375.062t-.375-.062'/%3E%3C/svg%3E");
-  background-repeat: no-repeat; background-position: right 16px center; background-size: 14px 14px;
+  padding-right: 22px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%230e1220'%3E%3Cpath d='M11.625 14.913q-.175-.063-.325-.213l-4.6-4.6q-.275-.275-.275-.7t.275-.7t.7-.275t.7.275l3.9 3.9l3.9-3.9q.275-.275.7-.275t.7.275t.275.7t-.275.7l-4.6 4.6q-.15.15-.325.213t-.375.062t-.375-.062'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 2px center; background-size: 14px 14px;
 }
 /* Eigenes Dropdown-Menü (JS-Progressive-Enhancement über echtem <select>,
    siehe app.js) – native Options-Listen lassen sich nicht browserübergreifend
@@ -223,21 +243,19 @@ select {
 .custom-select select { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .custom-select-trigger {
   all: unset; box-sizing: border-box; display: flex; align-items: center; width: 100%;
-  padding: 9px 11px; font: inherit; font-size: 13.5px; cursor: pointer;
-  background: #fff; border: 1px solid #dde1ea;
-  border-radius: var(--radius-sm); color: var(--ink);
+  padding: 0 0 8px; font: inherit; font-size: 14px; cursor: pointer;
+  background: transparent; border: none; border-bottom: 2px solid var(--line2);
+  border-radius: 0; color: var(--ink);
 }
-/* Der Trigger ist ein <button>, sonst würde die generische Regel
-   `button:hover` (Spezifität 0,1,1 > 0,1,0) hier einen blauen Hintergrund
-   erzwingen. Formularfelder färben sich nicht blau – nur der Rahmen dunkelt
-   leicht nach als Affordance. */
-.custom-select-trigger:hover { background: #fff; border-color: #c3c8d4; color: var(--ink); }
+.custom-select-trigger:hover { background: transparent; border-bottom-color: var(--ink); color: var(--ink); }
 /* Ohne das läuft ein langer, unbrechbarer Wert (Domain, Nutzername beim
    "Links übertragen an"-Dropdown) über den Rahmen des Feldes hinaus, statt
    sauber abgeschnitten zu werden – gleiches Muster wie .dt-label unten. */
 .custom-select-trigger .select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .custom-select-trigger .chevron-icon { width: 14px; height: 14px; margin-left: auto; color: var(--muted); flex: none; transform: translateY(1px); }
-.custom-select-trigger:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent-focus); outline-offset: 0; }
+/* Gleiches Prinzip wie bei input:focus-visible oben – kein Rahmen um den
+   Trigger, nur die verstärkte Unterlinie. */
+.custom-select-trigger:focus-visible { border-bottom-color: var(--accent); outline: none; box-shadow: 0 2px 0 0 var(--accent); }
 .custom-select-menu {
   left: 0; right: 0; top: calc(100% + 4px); padding: 6px;
   max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
@@ -246,8 +264,8 @@ select {
   all: unset; box-sizing: border-box; display: block; width: 100%;
   padding: 8px 10px; border-radius: var(--radius-xs); font-size: 13.5px; color: var(--ink); cursor: pointer;
 }
-.custom-select-option:hover { background: var(--line2); }
-.custom-select-option.active { color: var(--accent); font-weight: 600; background: var(--accent-soft); }
+.custom-select-option:hover { background: var(--bg); }
+.custom-select-option.active { color: var(--surface); font-weight: 700; background: var(--ink); }
 
 /* Eigener Datum/Uhrzeit-Picker (siehe app.js), analog zum Custom-Dropdown
    oben – native datetime-local-Popups lassen sich nicht im App-Design stylen. */
@@ -257,7 +275,9 @@ select {
 .custom-datetime-trigger .dt-icon { width: 15px; height: 15px; flex: none; color: var(--muted); }
 .custom-datetime-trigger .dt-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .custom-datetime-trigger.dt-empty .dt-label { color: var(--muted2); }
-.custom-datetime-trigger:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent-focus); outline-offset: 0; }
+/* Gleiches Prinzip wie bei input:focus-visible oben – kein Rahmen um den
+   Trigger, nur die verstärkte Unterlinie. */
+.custom-datetime-trigger:focus-visible { border-bottom-color: var(--accent); outline: none; box-shadow: 0 2px 0 0 var(--accent); }
 /* Gleiches Prinzip wie .account-menu oben. Wichtig hier zusätzlich: die
    align-right-Messung in app.js liest getBoundingClientRect() direkt nach
    dem Setzen von .open – mit allow-discrete schaltet display synchron im
@@ -276,52 +296,63 @@ select {
    zwischen den Pfeilen und dem Monatstitel dazwischen, siehe .dt-cal-header). */
 .dt-cal-header .pagination-arrow { width: 26px; height: 26px; position: relative; }
 .dt-cal-header .pagination-arrow::before { content: ''; position: absolute; inset: -7px; }
-.dt-cal-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.dt-cal-title { font-size: 12px; font-weight: 700; color: var(--ink); text-transform: uppercase; letter-spacing: .04em; }
 .dt-weekdays, .dt-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; text-align: center; }
-.dt-weekdays span { font-size: 11px; font-weight: 600; color: var(--muted2); padding: 4px 0; }
+.dt-weekdays span { font-size: 10px; font-weight: 700; color: var(--muted2); padding: 4px 0; text-transform: uppercase; }
 .dt-day {
   all: unset; box-sizing: border-box; display: flex; align-items: center; justify-content: center;
   aspect-ratio: 1; border-radius: var(--radius-xs); font-size: 12.5px; color: var(--ink); cursor: pointer;
 }
-.dt-day:hover { background: var(--line2); }
+.dt-day:hover { background: var(--bg); }
 .dt-day.other-month { color: var(--muted3); }
 .dt-day.today { font-weight: 700; color: var(--accent); }
-.dt-day.selected { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.dt-day.selected { background: var(--ink); color: var(--surface); font-weight: 700; }
 .dt-time-row {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line2);
 }
-.dt-time-label { font-size: 12.5px; font-weight: 600; color: var(--label); }
+.dt-time-label { font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; }
 .dt-time-inputs { display: flex; align-items: center; gap: 4px; }
 .dt-time-inputs input {
-  width: 40px; padding: 6px 0; text-align: center; font-size: 13px;
+  width: 40px; padding: 6px 0; text-align: center; font-size: 13px; border-bottom: 2px solid var(--line2);
   -moz-appearance: textfield;
 }
 .dt-time-inputs input::-webkit-outer-spin-button, .dt-time-inputs input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-.dt-time-sep { color: var(--muted2); font-weight: 600; }
+.dt-time-sep { color: var(--muted2); font-weight: 700; }
 .dt-panel-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 14px; }
-.dt-panel-footer .btn { padding: 7px 14px; font-size: 12.5px; }
+.dt-panel-footer .btn { padding: 7px 14px; font-size: 11.5px; }
+/* Kein umlaufendes outline auf den Unterstrich-Feldern – wirkt dort wie ein
+   ungewollter Rahmen um ein Element, das bewusst keine Box sein soll. Als
+   Fokus-Signal reicht die Farbänderung der Linie selbst; box-shadow
+   verdoppelt sie zu einem kräftigeren 4px-Band darunter (kein Layout-Shift,
+   da box-shadow keinen Platz beansprucht) – Farbe allein wäre ein
+   schwächerer, rein farbbasierter Hinweis. */
 input:focus-visible, select:focus-visible, textarea:focus-visible {
-  border-color: var(--accent); outline: 2px solid var(--accent-focus); outline-offset: 0;
+  border-bottom-color: var(--accent); outline: none;
+  box-shadow: 0 2px 0 0 var(--accent);
 }
+textarea:focus-visible { border-color: var(--accent); }
 button:focus-visible, a:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
+/* Primärer Button: Vollton-Fläche, Versalien + Sperrung statt Softness –
+   die eine bewusst "laute" Stelle im sonst zurückhaltenden Farbeinsatz. */
 button, .btn {
-  font: inherit; font-size: 13.5px; font-weight: 600; cursor: pointer; text-decoration: none; display: inline-block;
-  background: var(--accent); color: var(--accent-ink);
-  border: 1px solid var(--accent); border-radius: var(--radius-sm); padding: 9px 20px;
+  font: inherit; font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  cursor: pointer; text-decoration: none; display: inline-block;
+  background: var(--ink); color: var(--surface);
+  border: 1px solid var(--ink); border-radius: var(--radius-sm); padding: 10px 20px;
 }
-button:hover, .btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+button:hover, .btn:hover { background: var(--accent); border-color: var(--accent); }
 /* Taktiles Press-Feedback für alle Buttons (nicht nur .btn-create, siehe
    unten) – bewusst nur ein dezenter 1px-Versatz statt Skalierung. */
 button:active, .btn:active { transform: translateY(1px); }
 button.ghost, .btn.ghost {
-  background: transparent; color: var(--label); font-weight: 500; border-color: var(--line);
+  background: transparent; color: var(--ink); font-weight: 700; border-color: var(--line);
 }
 button.ghost:hover, .btn.ghost:hover { border-color: var(--accent); color: var(--accent); background: transparent; }
 button.destructive-ghost, .btn.destructive-ghost {
-  background: transparent; color: var(--danger); font-weight: 500; border-color: var(--danger-border);
+  background: transparent; color: var(--danger); font-weight: 700; border-color: var(--danger-border);
 }
 button.destructive-ghost:hover, .btn.destructive-ghost:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
 button:disabled, button:disabled:hover {
@@ -331,9 +362,9 @@ button:disabled, button:disabled:hover {
    .row-actions, siehe domainTableRow() in views.js) – der Button selbst wird
    nach dem Klick zum Ergebnis (Label + Farbe), bleibt aber klickbar für einen
    erneuten Check, siehe app.js. */
-.reach-test-btn.ok { color: var(--success); border-color: var(--success); }
+.reach-test-btn.ok { color: var(--success); border-color: var(--success); background: transparent; }
 .reach-test-btn.ok:hover { color: var(--success); border-color: var(--success); background: var(--success-soft); }
-.reach-test-btn.fail { color: var(--danger); border-color: var(--danger-border); }
+.reach-test-btn.fail { color: var(--danger); border-color: var(--danger-border); background: transparent; }
 .reach-test-btn.fail:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
 .stack > * + * { margin-top: 12px; }
 .grid-form { display: flex; flex-wrap: wrap; gap: 20px; align-items: end; }
@@ -341,38 +372,40 @@ button:disabled, button:disabled:hover {
 .grid-form .field.grow { flex: 3 1 300px; }
 .grid-form .field.submit { flex: 0 0 auto; }
 .radio-row { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
-.radio-row.divided { border-top: 1px solid var(--line2); padding-top: 20px; margin-top: 2px; }
-.radio-row .label-inline { font-size: 12.5px; font-weight: 600; color: var(--label); margin: 0; }
-.radio-row label { display: flex; align-items: center; gap: 10px; font-size: 13.5px; font-weight: 400; color: var(--muted); margin: 0; }
+.radio-row.divided { border-top: 1px solid var(--ink); padding-top: 20px; margin-top: 2px; }
+.radio-row .label-inline { font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; margin: 0; }
+/* text-transform/letter-spacing zurücksetzen: das sind Options-Texte neben
+   Radios ("Persönlich"/"Organisation"), keine Formularfeld-Labels – ohne
+   den Reset erben sie sonst die Versalien/Sperrung vom Basis-label-Stil
+   oben, der genau dafür gedacht ist. */
+.radio-row label { display: flex; align-items: center; gap: 10px; font-size: 13.5px; font-weight: 400; color: var(--muted); margin: 0; text-transform: none; letter-spacing: normal; }
 .radio-row input[type=radio] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
 
 .create-actions { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+/* Kein separater Verlauf/Innenschatten mehr – derselbe Vollton-Look wie
+   jeder andere primäre Button, nur in der etwas größeren "Erstellen"-Höhe. */
 .btn-create {
-  --create-grad: linear-gradient(180deg, color-mix(in srgb, var(--accent), white 14%), var(--accent));
   display: inline-flex; align-items: center; gap: 9px; height: 44px; padding: 0 24px;
-  border: none; border-radius: 10px; font-size: 15px; font-weight: 600; letter-spacing: 0.01em;
-  background: var(--create-grad);
-  box-shadow: 0 1px 2px rgba(28, 33, 48, .3), inset 0 1px 0 rgba(255, 255, 255, .18);
-  transition: box-shadow .15s, filter .15s;
+  border: 1px solid var(--ink); border-radius: 0; font-size: 13px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em;
+  background: var(--ink); color: var(--surface);
 }
-.btn-create:hover {
-  background: var(--create-grad); filter: brightness(0.92);
-  box-shadow: 0 3px 8px color-mix(in srgb, var(--accent), transparent 65%), inset 0 1px 0 rgba(255, 255, 255, .18);
-}
-.btn-create:active { transform: translateY(1px); box-shadow: 0 1px 2px rgba(28, 33, 48, .3); }
+.btn-create:hover { background: var(--accent); border-color: var(--accent); }
+.btn-create:active { transform: translateY(1px); }
 .btn-create:disabled, .btn-create:disabled:hover {
-  background: var(--create-grad); opacity: .45; filter: none; cursor: not-allowed; box-shadow: none; transform: none;
+  background: transparent; color: var(--muted3); border-color: var(--line2); cursor: not-allowed; transform: none;
 }
 
-/* Badges (Pills) */
+/* Badges: umrandete Tags statt gefüllter Pillen – Farbe steckt in Kontur +
+   Text, nicht in einer Flächenfüllung. */
 .badge {
   display: inline-block; vertical-align: 2px; margin-left: 6px;
-  font-size: 11px; font-weight: 600; letter-spacing: 0;
-  color: var(--accent); background: var(--accent-soft); border-radius: 99px; padding: 2px 10px;
+  font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--accent); background: transparent; border: 1px solid var(--accent); border-radius: 0; padding: 1px 8px;
 }
-.badge.muted { color: var(--muted); background: var(--line2); }
-.badge.expired { color: var(--danger); background: var(--danger-soft); }
-.badge.active { color: var(--success); background: var(--success-soft); }
+.badge.muted { color: var(--muted); background: transparent; border-color: var(--line2); }
+.badge.expired { color: var(--danger); background: transparent; border-color: var(--danger); }
+.badge.active { color: var(--success); background: transparent; border-color: var(--success); }
 
 .empty {
   border: 1px dashed var(--line); border-radius: var(--radius);
@@ -381,7 +414,7 @@ button:disabled, button:disabled:hover {
 
 /* Detailseite */
 .crumbs { margin: 0; }
-.crumbs a { color: var(--muted2); text-decoration: none; font-weight: 500; font-size: 13px; }
+.crumbs a { color: var(--muted2); text-decoration: none; font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
 .crumbs a:hover { color: var(--accent); }
 .detail-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .detail-head h1 .accent { color: var(--accent); }
@@ -413,9 +446,9 @@ button:disabled, button:disabled:hover {
 .stat-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .stat-row { display: flex; align-items: baseline; gap: 24px; row-gap: 6px; flex-wrap: wrap; }
 .stat-row .num { white-space: nowrap; }
-.stat-row .num b { font-size: 22px; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.stat-row .num b { font-size: 24px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .num-cell { font-variant-numeric: tabular-nums; }
-.stat-row .num span { font-size: 13px; color: var(--muted2); }
+.stat-row .num span { font-size: 11px; color: var(--muted2); text-transform: uppercase; letter-spacing: .06em; }
 /* Chip-Buttons (Zeitraum- und Seitengröße-Auswahl teilen sich dieses
    Grundmuster, siehe .page-size-group/.page-size-btn weiter unten). */
 /* flex-wrap: the chips themselves don't shrink (fixed min-width per
@@ -427,30 +460,35 @@ button:disabled, button:disabled:hover {
    between two routes) and .qr-type-tabs span (static QR type, CSS-only radio
    trick, see further below) – three independent implementations of the same
    look used to each carry the full declaration list; consolidated here so a
-   future style tweak (e.g. the pill height) only needs to change once. Each
-   keeps its own rules below only for what genuinely differs: element type
-   (button/a/span), clickability, and .qr-type-tabs' radio-driven active state. */
+   future style tweak (e.g. the pill height) only needs to change once. Kein
+   Flächen-Hintergrund mehr fürs Segment selbst – aktiv wird über eine
+   Unterlinie markiert, ruhiger als die vorherige gefüllte Pille. */
 .range-group, .page-size-group, .tab-group, .qr-type-tabs {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
-  background: var(--bg); border-radius: var(--radius-sm); padding: 3px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0;
+  background: transparent; border-bottom: 1px solid var(--line2); border-radius: 0; padding: 0;
 }
 .tab-group, .qr-type-tabs { width: fit-content; }
+/* 40px, nicht weniger: Mindest-Klickfläche aus einer früheren Runde (siehe
+   make-interfaces-feel-better-Check), beim Redesign fast versehentlich auf
+   38px gerutscht. */
 .range-btn, .page-size-btn, .tab-link, .qr-type-tabs span {
-  height: 40px; font-size: 13px; font-weight: 500; color: var(--muted); border-radius: var(--radius-xs);
+  height: 40px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--muted2); border-radius: 0;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
 }
 .tab-link:focus-visible, .qr-type-tabs label:focus-within span { outline: 2px solid var(--accent); outline-offset: 1px; }
 .range-btn.active, .range-btn.active:hover, .page-size-btn.active, .page-size-btn.active:hover,
 .tab-link.active, .tab-link.active:hover, .qr-type-tabs label:has(input:checked) span {
-  background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: var(--shadow);
+  background: transparent; color: var(--ink); font-weight: 700; box-shadow: none; border-bottom-color: var(--accent);
 }
 
 .range-btn, .page-size-btn {
-  background: transparent; border: 1px solid transparent; font-family: inherit; cursor: pointer;
+  background: transparent; border: none; border-bottom: 2px solid transparent; font-family: inherit; cursor: pointer;
   padding: 0 12px; text-align: center;
 }
 .range-btn { min-width: 52px; }
-.range-btn:hover, .page-size-btn:hover { background: transparent; border-color: transparent; color: var(--ink); }
-.range-btn.active, .page-size-btn.active { border-color: var(--line); }
+.range-btn:hover, .page-size-btn:hover { background: transparent; color: var(--ink); }
+.range-btn.active, .page-size-btn.active { border-bottom-color: var(--accent); }
 
 /* Seiten-Tabs (z. B. Admin-Einstellungen: Zugangs-/Domainverwaltung) – echte
    <a>-Navigation zwischen zwei Server-Routen statt Client-Toggle (siehe
@@ -462,8 +500,8 @@ button:disabled, button:disabled:hover {
 .chart-wrap { position: relative; margin-top: 18px; }
 .chart-svg { display: block; width: 100%; height: 190px; }
 .chart-grid { stroke: var(--line2); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.chart-grid-base { stroke: var(--line); }
-.chart-area { fill: color-mix(in srgb, var(--accent), transparent 88%); }
+.chart-grid-base { stroke: var(--ink); }
+.chart-area { fill: color-mix(in srgb, var(--accent), transparent 92%); }
 .chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .chart-hover { cursor: default; }
 .chart-hover-point {
@@ -474,27 +512,27 @@ button:disabled, button:disabled:hover {
 }
 .chart-hover-point.visible { opacity: 1; }
 .chart-label {
-  position: absolute; left: 8px; font-size: 11px; color: var(--muted2);
-  background: rgba(255, 255, 255, .8); padding: 0 3px;
+  position: absolute; left: 8px; font-size: 10.5px; font-weight: 700; color: var(--muted2);
+  background: rgba(255, 255, 255, .85); padding: 0 3px;
 }
 /* Absolut positioniert statt Flex-space-between: jedes Label sitzt an der
    Prozent-Position seines echten Datenpunkt-Index (siehe xLabelsHtml() in
    views.js), damit es exakt unter dem zugehörigen Kurvenpunkt steht. */
 .chart-x-labels { position: relative; height: 14px; margin-top: 4px; }
-.chart-x-labels span { position: absolute; top: 0; transform: translateX(-50%); font-size: 11.5px; color: var(--muted2); white-space: nowrap; }
+.chart-x-labels span { position: absolute; top: 0; transform: translateX(-50%); font-size: 10.5px; color: var(--muted2); white-space: nowrap; }
 
 /* Chart-Tooltip: folgt der Punktposition (siehe app.js showTooltip) */
 .chart-tooltip {
   position: absolute; z-index: 5; pointer-events: none;
-  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-xs);
+  background: var(--ink); border: none; border-radius: var(--radius-xs);
   box-shadow: var(--shadow-hover); padding: 8px 10px; white-space: nowrap;
   transform: translate(-50%, calc(-100% - 10px));
   opacity: 0; transition: opacity .1s ease;
 }
 .chart-tooltip.visible { opacity: 1; }
-.chart-tooltip-title { font-size: 12px; font-weight: 600; color: var(--ink); margin-bottom: 4px; }
-.chart-tooltip-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); }
-.chart-tooltip-row b { color: var(--ink); margin-left: 10px; }
+.chart-tooltip-title { font-size: 11px; font-weight: 700; color: var(--surface); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em; }
+.chart-tooltip-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #c7cad4; }
+.chart-tooltip-row b { color: var(--surface); margin-left: 10px; }
 .chart-tooltip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
 
 /* Verteilungen (Referrer/Geräte/Browser) */
@@ -502,13 +540,13 @@ button:disabled, button:disabled:hover {
 .split li { font-size: 12.5px; }
 .split .row { display: flex; justify-content: space-between; }
 .split .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.split .val { color: var(--muted2); white-space: nowrap; }
-.split .meter { height: 6px; background: var(--line2); border-radius: 999px; margin-top: 4px; overflow: hidden; }
-.split .meter span { display: block; height: 100%; background: var(--accent); border-radius: 999px; }
+.split .val { color: var(--muted2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.split .meter { height: 3px; background: var(--line2); border-radius: 0; margin-top: 4px; overflow: hidden; }
+.split .meter span { display: block; height: 100%; background: var(--ink); border-radius: 0; }
 
 /* Tabelle */
 .tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; font-family: var(--sans); color: var(--ink); }
-.tbl th { text-align: left; color: var(--muted2); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line); }
+.tbl th { text-align: left; color: var(--muted2); font-weight: 700; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; padding: 7px 10px 7px 0; border-bottom: 2px solid var(--ink); }
 /* word-break (nicht nur overflow-wrap): bei automatischem Tabellen-Layout
    bezieht Chrome overflow-wrap nicht in die Spaltenbreiten-Berechnung mit
    ein, ein langer unbrechbarer Referrer-String ("Letzte Klicks") sprengt
@@ -542,16 +580,17 @@ button:disabled, button:disabled:hover {
    aufbrechen und dieselbe Seiten-Überlauf-Klasse Bug zurückbringen. */
 .tbl:not(.linktable) { min-width: 560px; }
 
-/* Link-Tabelle (Meine Links) */
+/* Link-Tabelle (Meine Links): flache Zeilen statt gerundeter Karte, obere/
+   untere Kontur über den Kartenrahmen der umschließenden .table-card. */
 .table-card { padding: 0; overflow: hidden; }
-.table-toolbar { display: flex; align-items: center; gap: 16px; padding: 18px 22px; flex-wrap: wrap; }
+.table-toolbar { display: flex; align-items: center; gap: 16px; padding: 18px 22px; flex-wrap: wrap; border-bottom: 1px solid var(--line2); }
 .table-toolbar .search-input { max-width: 260px; margin-right: auto; }
-.table-scroll { overflow-x: auto; border-top: 1px solid var(--line); }
+.table-scroll { overflow-x: auto; }
 .linktable { width: 100%; border-collapse: collapse; font-family: var(--sans); font-size: 13.5px; color: var(--ink); }
 .linktable th {
-  text-align: left; white-space: nowrap; color: var(--muted2); font-weight: 600; font-size: 11.5px;
-  text-transform: uppercase; letter-spacing: .06em; padding: 11px 14px; background: var(--bg);
-  border-bottom: 1px solid var(--line2);
+  text-align: left; white-space: nowrap; color: var(--muted2); font-weight: 700; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .08em; padding: 11px 14px; background: transparent;
+  border-bottom: 2px solid var(--ink);
 }
 .linktable td { padding: 10px 14px; vertical-align: middle; border-bottom: 1px solid var(--line2); }
 .linktable th:last-child, .linktable td:last-child { text-align: right; padding-right: 24px; }
@@ -563,12 +602,12 @@ button:disabled, button:disabled:hover {
   display: inline-flex; align-items: center; justify-content: center;
   width: 40px; height: 40px; min-width: 0; padding: 0; flex: none;
   background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); color: var(--muted); cursor: pointer;
+  border-radius: var(--radius-sm); color: var(--ink); cursor: pointer;
 }
-.pagination-arrow:hover { background: var(--bg); border-color: var(--line); color: var(--ink); }
-.pagination-arrow:disabled, .pagination-arrow:disabled:hover { opacity: .4; cursor: not-allowed; background: var(--surface); border-color: var(--line); color: var(--muted); }
+.pagination-arrow:hover { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.pagination-arrow:disabled, .pagination-arrow:disabled:hover { opacity: .4; cursor: not-allowed; background: var(--surface); border-color: var(--line2); color: var(--muted); }
 .linktable tbody tr:last-child td { border-bottom: none; }
-.linktable tbody tr:hover { background: #f7f8fb; }
+.linktable tbody tr:hover { background: var(--bg); }
 .linktable .nowrap { white-space: nowrap; }
 .linktable .url-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .linktable .url-cell a { color: var(--muted); text-decoration: none; }
@@ -583,7 +622,7 @@ button:disabled, button:disabled:hover {
 .linktable .slug {
   display: inline-block; max-width: 160px; vertical-align: middle;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-weight: 600; color: var(--accent); text-decoration: none;
+  font-weight: 700; color: var(--accent); text-decoration: none;
 }
 .linktable .slug:hover { text-decoration: underline; }
 .linktable .badge { margin-left: 0; vertical-align: 1px; }
@@ -597,14 +636,14 @@ button:disabled, button:disabled:hover {
    was bei genau passender Spaltenbreite durch Rundungsdifferenzen von unter
    1px unnötig umbricht, obwohl eigentlich genug Platz da ist. */
 .row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
-/* Schmaleres horizontales Padding als der Standard-Button (9px 20px): in der
+/* Schmaleres horizontales Padding als der Standard-Button (10px 20px): in der
    Domainverwaltung können hier bis zu drei Buttons gleichzeitig stehen
    ("Testen"-Ergebnis + "Als Standard setzen" + "Entfernen") – der
    Zeilenumbruch (s.o.) bleibt als Fallback, aber so passen die allermeisten
    Kombinationen auf eine Zeile. Vertikales Padding/Schriftgröße bleiben beim
    Standard, sonst wirken diese Buttons neben "Anlegen"/"Hinzufügen" auf
    derselben Seite spürbar kleiner/leichter statt nur schmaler. */
-.row-actions button, .row-actions .btn { padding: 9px 12px; }
+.row-actions button, .row-actions .btn { padding: 10px 12px; }
 
 /* Link-/Nutzer-/Domain-Tabelle als Karten-Stapel statt seitlich scrollender
    Tabelle unter der Sidebar-Bruchgrenze: jede <tr> wird zur Karte, jede <td>
@@ -621,7 +660,7 @@ button:disabled, button:disabled:hover {
      auf der Link-Detailseite, siehe linkDetail() in views.js) bleiben echte
      Tabellen und brauchen overflow-x:auto (Basisregel oben) weiterhin, sonst
      überläuft die ganze Seite statt nur die Tabelle zu scrollen. */
-  .table-scroll:has(.linktable) { border-top: none; overflow-x: visible; padding: 14px; }
+  .table-scroll:has(.linktable) { overflow-x: visible; padding: 14px; }
   /* Nicht display:none: das entfernt den <thead> auch aus dem
      Accessibility-Tree, Screenreader-Nutzer:innen verlieren dadurch jede
      Spalten-Zuordnung (die ::before-Labels unten sind rein visuell, werden
@@ -664,8 +703,8 @@ button:disabled, button:disabled:hover {
      ::before-Label auf der Karte. */
   .linktable td::before {
     content: attr(data-label); flex: none;
-    font-size: 11.5px; font-weight: 600; color: var(--muted2);
-    text-transform: uppercase; letter-spacing: .06em;
+    font-size: 10.5px; font-weight: 700; color: var(--muted2);
+    text-transform: uppercase; letter-spacing: .08em;
   }
   /* Ziel-URL/Beschreibung können sehr lang werden – statt einer einzeiligen
      Ellipsis (die auf Kartenbreite kaum noch etwas zeigen würde) bricht der
@@ -687,7 +726,7 @@ button:disabled, button:disabled:hover {
   width: 22px; height: 22px; margin-right: 2px; border-radius: var(--radius-xs);
   color: var(--muted2); cursor: pointer; vertical-align: middle;
 }
-.copy-icon-btn:hover { background: var(--line2); color: var(--accent); }
+.copy-icon-btn:hover { background: var(--ink); color: var(--surface); }
 .copy-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .copy-icon { width: 15px; height: 15px; }
 
@@ -698,8 +737,12 @@ button:disabled, button:disabled:hover {
 .qrbox .dl form { flex: 1; margin: 0; }
 .qrbox .dl form .btn { width: 100%; }
 .color-pills { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.color-pills .label-inline { font-size: 12.5px; font-weight: 600; color: var(--label); }
-.color-pills label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12.5px; color: var(--muted); cursor: pointer; white-space: nowrap; }
+.color-pills .label-inline { font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; }
+/* Gleicher Reset wie bei .radio-row label oben – auch hier Options-Text
+   ("Vordergrund"/"Hintergrund"/"Hintergrund transparent"), kein Feld-Label.
+   Ohne den Reset war "Hintergrund transparent" durch Versalien+Sperrung
+   plus white-space:nowrap breit genug, um die Seite zu sprengen. */
+.color-pills label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12.5px; color: var(--muted); cursor: pointer; white-space: nowrap; text-transform: none; letter-spacing: normal; }
 /* Checkbox wie die Radios bei Sichtbarkeit (.radio-row input[type=radio]):
    feste 16px-Größe statt Browser-Standard, damit sie zur restlichen Zeile passt. */
 .color-pills input[type=checkbox] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
@@ -710,9 +753,9 @@ button:disabled, button:disabled:hover {
   appearance: none; -webkit-appearance: none;
   width: 30px; height: 30px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius-xs); cursor: pointer; background: #fff;
 }
-.color-pills input[type=color]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 5px; overflow: hidden; }
-.color-pills input[type=color]::-webkit-color-swatch { border: none; border-radius: 5px; }
-.color-pills input[type=color]::-moz-color-swatch { border: none; border-radius: 5px; }
+.color-pills input[type=color]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 0; overflow: hidden; }
+.color-pills input[type=color]::-webkit-color-swatch { border: none; border-radius: 0; }
+.color-pills input[type=color]::-moz-color-swatch { border: none; border-radius: 0; }
 .color-pills input[type=color]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 /* Hintergrundfarbe spielt keine Rolle mehr, wenn "transparent" angehakt ist –
    Swatch bleibt bedienbar (kein disabled, einfacher als mit JS synchron zu
@@ -724,13 +767,13 @@ button:disabled, button:disabled:hover {
 .qr-preview-checker {
   background-image: conic-gradient(var(--line2) 90deg, transparent 90deg 180deg, var(--line2) 180deg 270deg, transparent 270deg);
   background-size: 16px 16px;
-  border-radius: var(--radius-xs);
+  border-radius: 0;
 }
 
 /* Statischer QR-Code Generator: Typ-Tabs (URL/Text/WLAN/EPC) – CSS-only per
    :has() auf .qr-form, siehe qrTypeTabs()/qrTypePanels() in views.js. Struktur
-   (verstecktes Radio + Label/Span) damit es auch ohne JS klappt; die "pill"-
-   Optik selbst kommt aus der geteilten Segmented-control-Regel weiter oben
+   (verstecktes Radio + Label/Span) damit es auch ohne JS klappt; die Optik
+   selbst kommt aus der geteilten Segmented-control-Regel weiter oben
    (.range-group/.range-btn), hier nur noch das Radio/Label-spezifische. */
 .qr-type-tabs input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .qr-type-tabs label { margin: 0; cursor: pointer; }
@@ -745,9 +788,9 @@ button:disabled, button:disabled:hover {
 .qr-form:has(#qt-epc:checked) .qr-type-panel[data-panel="epc"] { display: flex; }
 
 /* Meldungen & Fuß */
-.flash { margin: 20px 32px 0; padding: 11px 20px; border-radius: var(--radius-xs); font-size: 13.5px; font-weight: 500; }
-.flash.ok { background: var(--accent-soft); border: 1px solid var(--accent-soft-border); color: #16307e; }
-.flash.error { background: var(--danger-soft); border: 1px solid var(--danger-soft-border); color: var(--danger); }
+.flash { margin: 20px 32px 0; padding: 11px 20px; border-radius: var(--radius-xs); font-size: 13.5px; font-weight: 500; border: 1px solid; }
+.flash.ok { background: var(--accent-soft); border-color: var(--accent-soft-border); color: #16307e; }
+.flash.error { background: var(--danger-soft); border-color: var(--danger-soft-border); color: var(--danger); }
 .card .flash { margin: 0 0 12px; }
 
 /* Toast: die Redirect-Meldung aus layout() (nach Speichern/Löschen etc.) –
@@ -778,55 +821,57 @@ button:disabled, button:disabled:hover {
 /* Login */
 .login-shell {
   flex: 1; display: grid; place-items: center; padding: 40px 24px;
-  background: linear-gradient(180deg, var(--bg) 0%, var(--accent-soft) 100%);
+  background: var(--surface);
 }
 
 .login-card {
   width: 100%; max-width: 340px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
-  box-shadow: var(--shadow), 0 12px 32px rgba(14, 18, 32, .08);
+  background: var(--surface); border: 1px solid var(--ink); border-radius: 0;
+  box-shadow: none;
   padding: 40px 32px 32px; display: flex; flex-direction: column; align-items: center;
   text-align: center; color: var(--ink);
 }
-.login-brand { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 28px; }
-.login-card h2 { font-size: 18px; font-weight: 600; color: var(--ink); margin: 0 0 6px; text-transform: none; letter-spacing: 0; }
+.login-brand { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin: 0 0 28px; }
+.login-card h2 { font-size: 18px; font-weight: 700; color: var(--ink); margin: 0 0 6px; text-transform: none; letter-spacing: -0.01em; }
 .login-card h3 { font-size: 13.5px; font-weight: 400; color: var(--muted2); margin: 0 0 32px; text-transform: none; letter-spacing: 0; }
 .login-card .flash.error { width: 100%; margin: 0 0 16px; }
 
-.login-form { display: grid; gap: 16px; width: 100%; margin: 0 0 22px; text-align: left; }
-.login-form label { font-size: 12.5px; font-weight: 600; color: var(--label); margin-bottom: 6px; }
+.login-form { display: grid; gap: 22px; width: 100%; margin: 0 0 22px; text-align: left; }
+.login-form label { font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 7px; }
 .login-form input {
-  width: 100%; height: 44px; padding: 0 14px; font: inherit; font-size: 14.5px;
-  background: #fff; color: var(--ink); border: 1px solid #dde1ea; border-radius: var(--radius-sm);
+  width: 100%; height: auto; padding: 0 0 8px; font: inherit; font-size: 14.5px;
+  background: transparent; color: var(--ink); border: none; border-bottom: 2px solid var(--line2); border-radius: 0;
   transition: border-color .2s;
 }
 .login-form button {
-  height: 44px; margin-top: 6px; padding: 0 20px; font: inherit; font-size: 14.5px; font-weight: 600;
-  border: 1px solid var(--accent); border-radius: var(--radius-sm); cursor: pointer;
-  color: var(--accent-ink); background: var(--accent);
+  height: 44px; margin-top: 6px; padding: 0 20px; font: inherit; font-size: 12.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em;
+  border: 1px solid var(--ink); border-radius: 0; cursor: pointer;
+  color: var(--surface); background: var(--ink);
 }
-.login-form button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.login-form button:hover { background: var(--accent); border-color: var(--accent); }
 
 /* SSO-Login (Authentik/OIDC, siehe loginPage() in views.js) – eigener,
    zurückhaltender Button oberhalb des Passwort-Formulars, damit der
    Standardweg (Passwort) optisch nicht verdrängt wird. */
 .login-sso-btn {
   display: flex; align-items: center; justify-content: center;
-  width: 100%; height: 44px; margin: 0 0 20px; font: inherit; font-size: 14.5px; font-weight: 600;
-  color: var(--label); background: transparent; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  width: 100%; height: 44px; margin: 0 0 20px; font: inherit; font-size: 12.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .05em;
+  color: var(--ink); background: transparent; border: 1px solid var(--ink); border-radius: 0;
   text-decoration: none; cursor: pointer;
 }
 .login-sso-btn:hover { border-color: var(--accent); color: var(--accent); }
-.login-divider { display: flex; align-items: center; gap: 10px; margin: 0 0 20px; font-size: 12px; color: var(--muted2); }
+.login-divider { display: flex; align-items: center; gap: 10px; margin: 0 0 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted2); }
 .login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--line2); }
 
-.search-input { max-width: 220px; padding: 6px 12px; }
+.search-input { max-width: 220px; padding: 0 0 6px; }
 
 /* Danger / Löschen mit Bestätigung */
 .danger-confirm { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .danger-confirm .copy { flex: 1 1 220px; min-width: 0; }
-.danger-confirm .copy b { font-size: 14px; color: var(--danger); display: block; }
-.danger-confirm .copy p { margin: 2px 0 0; font-size: 12.5px; color: var(--muted2); text-wrap: pretty; }
+.danger-confirm .copy b { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--danger); display: block; }
+.danger-confirm .copy p { margin: 4px 0 0; font-size: 12.5px; color: var(--muted2); text-wrap: pretty; }
 /* min-width:0 auf Form UND Feld: sonst behält die Form (als Flex-Kind von
    .danger-confirm) bzw. das Feld (als Flex-Kind der Form) ihre 180px-
    Wunschbreite ungeachtet von max-width:100% – sprengt in der schmalen
@@ -837,7 +882,7 @@ button:disabled, button:disabled:hover {
 /* Bestätigungs-Modal (natives <dialog>, siehe app.js/layout() in views.js) –
    eigenes Styling statt Browser-Standard, plus abgedunkelter Hintergrund. */
 .confirm-dialog {
-  border: none; border-radius: var(--radius); padding: 24px;
+  border: 1px solid var(--ink); border-radius: var(--radius); padding: 24px;
   box-shadow: var(--shadow-hover); max-width: 420px; width: calc(100vw - 32px);
   /* Deckelt den Dialog auf die Viewport-Höhe statt unbegrenzt zu wachsen, für
      sehr langen Bestätigungstext auf kleinen Bildschirmen. Wirkt sich sonst
@@ -849,8 +894,8 @@ button:disabled, button:disabled:hover {
   max-height: calc(100vh - 64px); overflow-y: auto; overscroll-behavior: contain;
   background: var(--surface); color: var(--ink);
 }
-.confirm-dialog::backdrop { background: rgba(14, 18, 32, .45); }
-.confirm-dialog h3 { font-size: 16px; font-weight: 700; color: var(--ink); text-transform: none; letter-spacing: 0; margin: 0 0 10px; }
+.confirm-dialog::backdrop { background: rgba(14, 18, 32, .5); }
+.confirm-dialog h3 { font-size: 16px; font-weight: 700; color: var(--ink); text-transform: none; letter-spacing: -0.01em; margin: 0 0 10px; }
 .confirm-dialog-text { margin: 0 0 20px; font-size: 13.5px; color: var(--muted); line-height: 1.55; text-wrap: pretty; }
 .confirm-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
@@ -862,7 +907,7 @@ button:disabled, button:disabled:hover {
 .mobile-topbar {
   display: none; align-items: center; gap: 12px;
   padding: max(14px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 14px max(20px, env(safe-area-inset-left));
-  background: var(--surface); border-bottom: 1px solid var(--line);
+  background: var(--surface); border-bottom: 1px solid var(--ink);
 }
 /* Eigener Link statt dem Sidebar-Dropdown (Profil/Einstellungen/Abmelden
    bleiben über den "Mehr"-Tab erreichbar) – hier reicht ein direkter Sprung
@@ -877,25 +922,25 @@ button:disabled, button:disabled:hover {
    die Sidebar für Account/Admin-Einstellungen. */
 .bottom-nav {
   display: none; align-items: flex-end;
-  background: var(--surface); border-top: 1px solid var(--line);
+  background: var(--surface); border-top: 1px solid var(--ink);
   padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0px));
 }
 .bottom-nav-item {
   all: unset; box-sizing: border-box;
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px;
   padding: 4px 2px; color: var(--muted2); text-align: center; cursor: pointer;
-  font-size: 10px; font-weight: 500;
+  font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
 }
 .bottom-nav-item .navicon { width: 20px; height: 20px; }
-.bottom-nav-item.active { color: var(--accent); font-weight: 600; }
+.bottom-nav-item.active { color: var(--accent); font-weight: 700; }
 .bottom-nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: var(--radius-xs); }
 .bottom-nav-create {
   all: unset; box-sizing: border-box; flex: 1; display: flex; flex-direction: column; align-items: center; cursor: pointer;
 }
 .bottom-nav-create-circle {
-  width: 46px; height: 46px; border-radius: 50%; background: var(--accent); color: var(--accent-ink);
+  width: 46px; height: 46px; border-radius: 50%; background: var(--ink); color: var(--surface);
   display: flex; align-items: center; justify-content: center;
-  transform: translateY(-16px); border: 3px solid var(--bg);
+  transform: translateY(-16px); border: 3px solid var(--surface);
 }
 .bottom-nav-create:focus-visible .bottom-nav-create-circle { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bottom-nav-create-icon { width: 22px; height: 22px; }
@@ -931,7 +976,7 @@ button:disabled, button:disabled:hover {
   .sidebar.open { transform: translateX(0); }
   .sidebar-backdrop.open {
     display: block; position: fixed; inset: 0; z-index: 55;
-    background: rgba(14, 18, 32, .45);
+    background: rgba(14, 18, 32, .5);
   }
 }
 @media (max-width: 760px) and (prefers-reduced-motion: no-preference) {
@@ -941,5 +986,5 @@ body.sidebar-open-lock { overflow: hidden; }
 @media (prefers-reduced-motion: no-preference) {
   .split .meter span { transition: width 0.4s ease; }
   button, .btn { transition: transform .1s ease; }
-  .btn-create { transition: box-shadow .15s, transform .1s, filter .15s; }
+  .btn-create { transition: transform .1s ease; }
 }
