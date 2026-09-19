@@ -5,11 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// Cache busting for /static/*: browsers are allowed to cache style.css/
-// app.js aggressively (see maxAge in server.js), but so deploys still take
-// effect immediately instead of requiring a manual hard refresh, the
-// content hash is appended as a query parameter – it only changes when the
-// file actually changes.
+// Cache busting for /static/*: assets are cached aggressively (maxAge in
+// server.js), so a content hash is appended as query parameter to make deploys
+// take effect immediately.
 function assetVersion(relPath) {
   try {
     const buf = fs.readFileSync(path.join(__dirname, '..', 'public', relPath));
@@ -19,18 +17,16 @@ function assetVersion(relPath) {
   }
 }
 const CSS_URL = `/static/style.css?v=${assetVersion('style.css')}`;
+const CHART_JS_URL = `/static/chart-shared.js?v=${assetVersion('chart-shared.js')}`;
 const APP_JS_URL = `/static/app.js?v=${assetVersion('app.js')}`;
 const FONT_URL = `/static/fonts/open-sans-latin.woff2?v=${assetVersion('fonts/open-sans-latin.woff2')}`;
 
 const numberFormat = new Intl.NumberFormat('de-DE');
 const fmtNum = (n) => numberFormat.format(n ?? 0);
 
-// style.css itself references the font file again via /static/* – it gets
-// the same hash cache-busting treatment as CSS/JS here, by replacing the
-// placeholder in the source once at startup with the font file's real
-// content hash. server.js serves this result instead of the raw file (see
-// the /static/style.css route there), so the embedded font URL is actually
-// versioned instead of forever carrying the same query string.
+// style.css references the font again: the placeholder is replaced once at
+// startup with the font's content hash. server.js serves this result instead
+// of the raw file.
 function loadCssContent() {
   try {
     const raw = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'), 'utf8');
@@ -47,10 +43,12 @@ function esc(s) {
     .replaceAll('"', '&quot;').replaceAll("'", '&#39;');
 }
 
-// Shared field-error rendering: `matchField` is which field a given <input>
-// represents, `errorField` is which field (if any) actually failed
-// validation on the last submit – only the matching input gets styled/
-// described, every other field on the same form stays untouched.
+// Shared field-error rendering: only the input whose `matchField` equals the
+// failed `errorField` gets styled/described.
+// URL/domain inputs are type="text", not "url": browsers reject a scheme-less
+// "example.com" natively, before the server can prepend "https://". The locked
+// target field is readonly, not disabled – a disabled field isn't submitted and
+// server-side validation would then fail although nothing was meant to change.
 function fieldInvalidAttrs(matchField, errorField, htmlId) {
   if (matchField !== errorField) return '';
   return ` class="invalid" aria-invalid="true" aria-describedby="${htmlId}-error"`;
@@ -66,21 +64,49 @@ const stripProto = (u) => u.replace(/^https?:\/\//, '');
 
 function fmtDate(iso) {
   if (!iso) return '–';
-  return parseDbDate(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) + ' Uhr';
+  return parseDbDate(iso).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) + '\u00A0Uhr';
+}
+
+// Language tag ("de-DE") -> short code plus full name for tooltip/screen readers.
+const langNames = new Intl.DisplayNames(['de'], { type: 'language' });
+function langInfo(tag) {
+  if (!tag) return { code: '–', name: 'unbekannt' };
+  let name = tag;
+  try { name = langNames.of(tag); } catch { /* malformed tag: show it as is */ }
+  return { code: tag.split('-')[0].toUpperCase(), name };
+}
+
+// Below 1000px the rows turn into two-line cards without the language column
+// (see .clicks-table in style.css).
+function recentClicksTable(clicks) {
+  const ref = (c) => esc(c.referrer || '(direkt / QR-Scan)');
+  const device = (c) => {
+    const key = { Mobil: 'device-phone', Tablet: 'device-tablet', Desktop: 'device-desktop' }[c.device];
+    // Icon only; name stays for screen readers. Unknown values fall back to text.
+    return key ? `${icon(key, 'device-icon')}<span class="sr-only">${esc(c.device)}</span>` : esc(c.device);
+  };
+  return `<div class="table-scroll"><table class="tbl clicks-table" aria-label="Letzte Klicks">
+    <thead><tr><th scope="col" class="col-time">Zeitpunkt</th><th scope="col" class="col-ref">Quelle</th><th scope="col" class="col-device">Gerät</th><th scope="col" class="col-browser">Browser</th><th scope="col" class="col-lang">Sprache</th></tr></thead>
+    <tbody>${clicks.map(c => `<tr class="click-row">
+      <td class="col-time"><time datetime="${parseDbDate(c.ts).toISOString()}">${fmtDate(c.ts)}</time></td>
+      <td class="col-ref" translate="no" title="${ref(c)}">${ref(c)}</td>
+      <td class="col-device" title="${esc(c.device)}">${device(c)}</td>
+      <td class="col-browser">${esc(c.browser)}</td>
+      <td class="col-lang">${(({ code, name }) => `<abbr title="${esc(name)}">${esc(code)}</abbr>`)(langInfo(c.lang))}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
 }
 
 function isExpired(link) {
   return !!link.expires_at && link.expires_at <= new Date().toISOString().replace('T', ' ').slice(0, 19);
 }
 
-// Visibility badge for a link
 function visibilityBadge(l) {
   return `<span class="badge${l.visibility === 'org' ? '' : ' muted'}">${l.visibility === 'org' ? 'Organisation' : 'Persönlich'}</span>`;
 }
 
-// Icons: mostly Material Symbols (Google, Apache-2.0, filled paths), vendored
-// in once — no icon font/library at runtime, same approach as the font.
-// "Erstellen" (dashboard) is a line icon with its own stroke markup.
+// Icons: mostly Material Symbols (Apache-2.0), vendored – no icon font at
+// runtime. "Erstellen" (dashboard) is a stroke icon.
 const ICON = {
   dashboard: `<path d="M0 0h24v24H0z" fill="none"/><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 6l2 -2c1 -1 3 -1 4 0l1 1c1 1 1 3 0 4l-5 5c-1 1 -3 1 -4 0M11 18l-2 2c-1 1 -3 1 -4 0l-1 -1c-1 -1 -1 -3 0 -4l5 -5c1 -1 3 -1 4 0"/>`,
   vault: `<path fill="currentColor" d="M4 20q-.825 0-1.412-.587T2 18V6q0-.825.588-1.412T4 4h6l2 2h8q.825 0 1.413.588T22 8v10q0 .825-.587 1.413T20 20zm7-3h8v-.55q0-1.125-1.1-1.787T15 14t-2.9.663T11 16.45zm5.413-4.587Q17 11.825 17 11t-.587-1.412T15 9t-1.412.588T13 11t.588 1.413T15 13t1.413-.587"/>`,
@@ -90,6 +116,9 @@ const ICON = {
   person: `<path fill="currentColor" d="M9.175 10.825Q8 9.65 8 8t1.175-2.825T12 4t2.825 1.175T16 8t-1.175 2.825T12 12t-2.825-1.175M4 20v-2.8q0-.85.438-1.562T5.6 14.55q1.55-.775 3.15-1.162T12 13t3.25.388t3.15 1.162q.725.375 1.163 1.088T20 17.2V20z"/>`,
   settings: `<path fill="currentColor" d="m9.25 22l-.4-3.2q-.325-.125-.612-.3t-.563-.375L4.7 19.375l-2.75-4.75l2.575-1.95Q4.5 12.5 4.5 12.338v-.675q0-.163.025-.338L1.95 9.375l2.75-4.75l2.975 1.25q.275-.2.575-.375t.6-.3l.4-3.2h5.5l.4 3.2q.325.125.613.3t.562.375l2.975-1.25l2.75 4.75l-2.575 1.95q.025.175.025.338v.674q0 .163-.05.338l2.575 1.95l-2.75 4.75l-2.95-1.25q-.275.2-.575.375t-.6.3l-.4 3.2zm2.8-6.5q1.45 0 2.475-1.025T15.55 12t-1.025-2.475T12.05 8.5q-1.475 0-2.488 1.025T8.55 12t1.013 2.475T12.05 15.5"/>`,
   chevron: `<path fill="currentColor" d="m12 21l-4.5-4.5l1.45-1.45L12 18.1l3.05-3.05l1.45 1.45zM8.95 9.05L7.5 7.6L12 3.1l4.5 4.5l-1.45 1.45L12 6z"/>`,
+  'device-phone': `<rect x="7" y="2.5" width="10" height="19" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 18.5h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>`,
+  'device-tablet': `<rect x="4.5" y="2.5" width="15" height="19" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M11 18.5h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>`,
+  'device-desktop': `<rect x="3" y="4" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9 20h6M12 16v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>`,
   'chevron-left': `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M14.5 5 9 12 14.5 19"/>`,
   'chevron-right': `<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M9.5 5 15 12 9.5 19"/>`,
   copy: `<path fill="currentColor" d="M9 18q-.825 0-1.412-.587T7 16V4q0-.825.588-1.412T9 2h9q.825 0 1.413.588T20 4v12q0 .825-.587 1.413T18 18zm0-2h9V4H9zm-4 6q-.825 0-1.412-.587T3 20V7q0-.425.288-.712T4 6t.713.288T5 7v13h10q.425 0 .713.288T16 21t-.288.713T15 22zm4-6V4z"/>`,
@@ -122,16 +151,13 @@ function navGroup(group, user, page) {
   const title = group.title ? `<div class="group-title">${esc(group.title)}</div>` : '';
   const links = group.items.map(n => {
     const active = (n.activeKeys || [n.key]).includes(page);
-    return `<a class="navlink${active ? ' active' : ''}" href="${n.href}" title="${esc(n.label)}">${icon(n.icon || n.key)}<span class="label">${esc(n.label)}</span></a>`;
+    return `<a class="navlink${active ? ' active' : ''}" href="${n.href}" title="${esc(n.label)}"${active ? ' aria-current="page"' : ''}>${icon(n.icon || n.key)}<span class="label">${esc(n.label)}</span></a>`;
   }).join('');
   return title + links;
 }
 
-// Mobile bottom navigation (<=760px, see .bottom-nav in style.css) – takes
-// over the primary-destinations role the hamburger+sidebar used to carry on
-// mobile. Shorter labels than the desktop sidenav (narrow 10px tabs).
-// "Mehr" opens the same sidebar overlay the old hamburger button did –
-// that's still where Account/Admin-Einstellungen live, see app.js.
+// Mobile bottom navigation (<=760px, see .bottom-nav in style.css); labels are
+// shorter than in the sidenav because the tabs are narrow.
 const BOTTOM_NAV_LEFT = [
   { key: 'myvault', href: '/app/user-vault', label: 'Mein Tresor' },
   { key: 'vault', href: '/app/org-vault', label: 'Team-Tresor' },
@@ -144,15 +170,9 @@ function bottomNavItem(n, page) {
   return `<a class="bottom-nav-item${active ? ' active' : ''}" href="${n.href}"${active ? ' aria-current="page"' : ''}>${icon(n.key, 'navicon')}<span>${esc(n.label)}</span></a>`;
 }
 function bottomNav(page, user) {
-  // Admins: Zahnrad + "Admin" statt generischem "Mehr" – direkter Link auf
-  // die Admin-Einstellungen (ein Tap, analog zum Sidebar-Link, siehe
-  // NAV_GROUPS), statt erst das Sidebar-Overlay zu öffnen. Damit Admins über
-  // diesen direkten Link nicht ihren einzigen mobilen Weg zu "Abmelden"
-  // verlieren (das Dropdown dafür steckt nur im Sidebar-Overlay), gibt es
-  // "Abmelden" zusätzlich direkt auf /app/account, siehe accountPage() –
-  // dorthin führt schon der Profil-Avatar in der mobilen Topbar.
-  // Mitglieder haben keine Admin-Seiten, für sie bleibt "Mehr" der generische
-  // Sidebar-Zugang (Overlay mit Konto/Abmelden).
+  // Admins: direkter "Admin"-Link statt "Mehr". Ihr Weg zu "Abmelden" (nur im
+  // Sidebar-Overlay) bleibt über /app/account erhalten, siehe accountPage().
+  // Mitglieder: "Mehr" öffnet das Sidebar-Overlay.
   const isAdmin = user.role === 'admin';
   const moreActive = page === 'users' || page === 'domains';
   const moreItem = isAdmin
@@ -217,14 +237,15 @@ ${body}
 </div>
 ${user ? bottomNav(page, user) : ''}
 <div id="copy-announcer" class="sr-only" role="status" aria-live="polite"></div>
-${user ? `<dialog id="confirm-dialog" class="confirm-dialog">
-  <h3>Wirklich löschen?</h3>
+${user ? `<dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-dialog-title">
+  <h2 id="confirm-dialog-title">Wirklich löschen?</h2>
   <p class="confirm-dialog-text"></p>
   <div class="dialog-actions">
     <button type="button" class="btn ghost" data-dialog-cancel>Abbrechen</button>
     <button type="button" class="destructive-ghost" data-dialog-confirm>Endgültig löschen</button>
   </div>
 </dialog>` : ''}
+<script src="${CHART_JS_URL}"></script>
 <script src="${APP_JS_URL}"></script>
 </body>
 </html>`;
@@ -257,23 +278,19 @@ function loginPage({ error = null, ssoEnabled = false } = {}) {
   return layout({ title: 'Anmelden', body });
 }
 
-// Returns only the content (no wrapping .radio-row div), so callers can
-// hang further elements (e.g. a submit button) onto the same row if needed.
-// locked=true (existing org links only, non-owner/non-admin, see
-// isOwnerOrAdmin in server.js): the radios stay visible but disabled –
-// otherwise a member could lock themselves out by switching to "Persönlich"
-// (canManage() only grants non-owners access as long as visibility stays
-// 'org').
+// Returns only the content (no .radio-row wrapper) so callers can add elements.
+// locked=true (org links, non-owner/non-admin; isOwnerOrAdmin in server.js):
+// disabled, otherwise a member could lock themselves out by switching to
+// "Persönlich" (canManage() only grants non-owners access while it stays 'org').
 function visibilityRadios(current = 'privat', locked = false) {
   const dis = locked ? ' disabled' : '';
   return `<span class="label-inline">Sichtbarkeit:</span>
     <label><input type="radio" name="visibility" value="privat" ${current !== 'org' ? 'checked' : ''}${dis}>Persönlich</label>
     <label><input type="radio" name="visibility" value="org" ${current === 'org' ? 'checked' : ''}${dis}>Organisation</label>
-    ${locked ? '<span class="muted" style="font-size:12.5px">Nur Besitzer:in/Admin können das ändern</span>' : ''}`;
+    ${locked ? '<span class="muted hint">Nur Besitzer:in/Admin können das ändern</span>' : ''}`;
 }
 
-// Only when domains are actually configured – otherwise there's nothing to
-// pick from and the field stays hidden.
+// Hidden unless domains are configured.
 function domainField(current, domains) {
   if (!domains || domains.length === 0) return '';
   return `<div class="field">
@@ -284,13 +301,10 @@ function domainField(current, domains) {
     </div>`;
 }
 
-// Search/pagination table (dashboard, personal vault, user & domain
-// management share the toolbar, page size, and arrows – app.js hooks in
-// generically via #links-search/.linktable/.page-size-btn/
-// #links-prev/#links-next). showSearch=false (e.g. the domains list):
-// realistically never enough rows for a search to help – app.js's search
-// code is tied to #links-search anyway and just does nothing without the
-// field, no separate handling needed.
+// Search/pagination table shared by dashboard, vaults, user & domain admin;
+// app.js hooks in via #links-search/.linktable/.page-size-btn/#links-prev/
+// #links-next. showSearch=false (domains): app.js's search does nothing
+// without #links-search, no extra handling needed.
 function searchTable({ links, theadHtml, rowsHtml, emptyText, showSearch = true }) {
   if (!links.length) return `<div class="empty">${emptyText}</div>`;
   const showToolbar = showSearch || links.length > 10;
@@ -298,7 +312,7 @@ function searchTable({ links, theadHtml, rowsHtml, emptyText, showSearch = true 
   <div class="card table-card">
     ${showToolbar ? `
     <div class="table-toolbar">
-      ${showSearch ? `<input id="links-search" class="search-input" placeholder="Suchen…" aria-label="Suchen">` : ''}
+      ${showSearch ? `<input id="links-search" class="search-input" placeholder="Suchen…" aria-label="Suchen" autocomplete="off">` : ''}
       ${links.length > 10 ? `
       <div class="page-size-group">
         <button type="button" class="page-size-btn" data-page-size="10">10</button>
@@ -310,7 +324,7 @@ function searchTable({ links, theadHtml, rowsHtml, emptyText, showSearch = true 
         <button type="button" id="links-next" class="pagination-arrow" aria-label="Nächste Seite">${icon('chevron-right', 'navicon')}</button>
       </div>` : ''}
     </div>` : ''}
-    <div class="table-scroll"${showToolbar ? '' : ' style="border-top:none"'}>
+    <div class="table-scroll">
     <table class="tbl linktable">
       <thead><tr>${theadHtml}</tr></thead>
       <tbody>${rowsHtml}</tbody>
@@ -319,14 +333,11 @@ function searchTable({ links, theadHtml, rowsHtml, emptyText, showSearch = true 
   </div>`;
 }
 
-// Shared row for the dashboard, personal vault & org vault – the three
-// tables only differ in one column: the dashboard shows visibility (before
-// status), the org vault shows "Erstellt von" (after status, see
-// canManage() in server.js – org links belong to the whole team, so
-// "Details" is available to every member), the personal vault shows
-// neither (it only ever lists links with visibility "Persönlich", see
-// linksByOwnerPrivate in db.js – the column would be identical on every row
-// there and thus redundant).
+// Shared row for dashboard, personal vault & org vault; they differ in one
+// column: dashboard shows visibility, org vault "Erstellt von" (org links
+// belong to the team, so "Details" is open to every member, see canManage()
+// in server.js), personal vault neither (always "Persönlich", see
+// linksByOwnerPrivate in db.js – the column would be redundant).
 function linkTableRow(l, short, { extraColumn = null } = {}) {
   const searchParts = [l.title || '', l.slug, l.target_url];
   if (extraColumn === 'owner') searchParts.push(l.owner_name || '');
@@ -334,7 +345,7 @@ function linkTableRow(l, short, { extraColumn = null } = {}) {
   const status = isExpired(l) ? `<span class="badge expired">Abgelaufen</span>` : `<span class="badge active">Aktiv</span>`;
   return `
 <tr data-search="${searchHay}">
-  <td class="url-cell" data-label="Ziel-URL"><a href="${esc(l.target_url)}" target="_blank" rel="noopener" title="${esc(l.target_url)}">${esc(l.target_url)}</a></td>
+  <td class="url-cell" data-label="Ziel-URL"><a translate="no" href="${esc(l.target_url)}" target="_blank" rel="noopener" title="${esc(l.target_url)}">${esc(l.target_url)}</a></td>
   <td class="desc-cell" data-label="Beschreibung">${l.title ? esc(l.title) : '<span class="muted">–</span>'}</td>
   <td class="muted nowrap" data-label="Erstellt am">${fmtDate(l.created_at)}</td>
   ${extraColumn === 'visibility' ? `<td class="nowrap" data-label="Sichtbarkeit">${visibilityBadge(l)}</td>` : ''}
@@ -342,7 +353,7 @@ function linkTableRow(l, short, { extraColumn = null } = {}) {
   ${extraColumn === 'owner' ? `<td class="cell-sub" data-label="Erstellt von" title="${esc(l.owner_name || '–')}">${esc(l.owner_name || '–')}</td>` : ''}
   <td class="nowrap short-cell" data-label="Short-Link">
     <button type="button" class="copy-icon-btn" data-copy="${esc(short)}" title="Link kopieren" aria-label="Link kopieren">${icon('copy', 'copy-icon')}</button>
-    <a class="slug" href="${esc(short)}" target="_blank" rel="noopener" title="${esc(stripProto(short))}">${esc(stripProto(short))}</a>
+    <a class="slug" translate="no" href="${esc(short)}" target="_blank" rel="noopener" title="${esc(stripProto(short))}">${esc(stripProto(short))}</a>
   </td>
   <td class="num-cell" data-label="Klicks">${fmtNum(l.clicks_total)}</td>
   <td class="nowrap" data-label=""><a class="btn ghost" href="/app/links/${l.id}">Details</a></td>
@@ -350,10 +361,8 @@ function linkTableRow(l, short, { extraColumn = null } = {}) {
 }
 
 // error/errorField/values: only set on the direct re-render after a failed
-// POST /app/links (see server.js) – lets the form keep what was typed and
-// highlight the one field that failed, instead of losing everything to a
-// redirect+flash. errorField null with error set (e.g. the generic "Link
-// konnte nicht angelegt werden" DB fallback) falls back to a plain banner.
+// POST /app/links (see server.js), so the form keeps its input. errorField
+// null with error set (generic DB fallback) shows a plain banner.
 function dashboard({ links, shortUrl, domains, user, flash, error = null, errorField = null, values = {} }) {
   const v = { target_url: '', slug: '', title: '', domain: domains[0] || '', expires_at: '', visibility: 'privat', ...values };
   const body = `
@@ -362,36 +371,33 @@ function dashboard({ links, shortUrl, domains, user, flash, error = null, errorF
 <h1>Neuen Kurzlink erstellen</h1>
 <section class="card">
   ${error && !errorField ? `<div class="flash error">${esc(error)}</div>` : ''}
-  <form method="post" action="/app/links" style="display:flex;flex-direction:column;gap:20px">
+  <form method="post" action="/app/links" class="flex-col">
     <div class="grid-form">
       <div class="field grow">
         <label for="target">Ziel-URL</label>
-        <!-- type="text" instead of type="url": browsers reject type="url"
-             input without a scheme (e.g. "example.com") natively, before
-             readLinkFields() in server.js can prepend "https://". -->
-        <input id="target" name="target_url" type="text" placeholder="https://…" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required>
+        <input id="target" name="target_url" type="text" placeholder="https://…" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required autocomplete="off">
         ${fieldErrorSpan('target_url', errorField, error, 'target')}
       </div>
     </div>
     <div class="grid-form">
       <div class="field grow">
         <label for="title">Beschreibung <span class="muted">(optional)</span></label>
-        <input id="title" name="title" type="text" placeholder="interner Name…" value="${esc(v.title)}">
+        <input id="title" name="title" type="text" placeholder="interner Name…" value="${esc(v.title)}" autocomplete="off">
       </div>
     </div>
     <div class="grid-form">
       <div class="field">
         <label for="slug">Wunsch-Kürzel <span class="muted">(optional)</span></label>
-        <input id="slug" name="slug" type="text" pattern="[A-Za-z0-9\\-_]{1,64}" placeholder="sommerfest…" value="${esc(v.slug)}"${fieldInvalidAttrs('slug', errorField, 'slug')} spellcheck="false">
+        <input id="slug" name="slug" type="text" pattern="[A-Za-z0-9\\-_]{1,64}" placeholder="sommerfest…" value="${esc(v.slug)}"${fieldInvalidAttrs('slug', errorField, 'slug')} spellcheck="false" autocomplete="off">
         ${fieldErrorSpan('slug', errorField, error, 'slug')}
       </div>
       ${domainField(v.domain, domains)}
       <div class="field">
         <label for="expires_at">Läuft ab <span class="muted">(optional)</span></label>
-        <input id="expires_at" name="expires_at" type="datetime-local" value="${esc(v.expires_at)}">
+        <input id="expires_at" name="expires_at" type="datetime-local" value="${esc(v.expires_at)}" autocomplete="off">
       </div>
     </div>
-    <div class="radio-row divided">
+    <div class="radio-row">
       ${visibilityRadios(v.visibility)}
       <div class="create-actions">
         <button type="submit" id="create-btn" class="btn-create">
@@ -452,122 +458,160 @@ ${searchTable({
   return layout({ title: 'Persönlicher Tresor', body, user, page: 'myvault' });
 }
 
-// Path math for the clicks line chart (stats section of the detail page).
-// Runs server-side for the initial render AND client-side when switching
-// the time-range chips (app.js) – hence a pure function with no DOM access,
-// so the logic ports 1:1 in both directions.
-const CHART_W = 800, CHART_TOP = 15, CHART_BASE = 185;
-function chartGeometry(values) {
-  // max = the real highest value for the label (can be 0, e.g. a fresh link
-  // with no clicks); denom = the same value but never 0 – pure division
-  // safeguard for the bar-height calculation. The two must not be mixed up,
-  // or the label would wrongly show "1" for actually 0 clicks.
-  const max = Math.max(...values, 0);
-  const denom = max || 1;
-  const n = values.length;
-  const points = values.map((v, i) => ({
-    x: n > 1 ? (i / (n - 1)) * CHART_W : CHART_W / 2,
-    y: CHART_BASE - (v / denom) * (CHART_BASE - CHART_TOP),
-  }));
-  const linePath = 'M' + points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' L');
-  const areaPath = `${linePath} L${CHART_W},${CHART_BASE} L0,${CHART_BASE} Z`;
-  // floor instead of round: at max=1, round(0.5)=1 would show the same
-  // number as the maximum (two "1"s at different heights) – floor
-  // guarantees mid < max for every max >= 1.
-  return { linePath, areaPath, points, max, mid: Math.floor(max / 2) };
+// Chart math/markup lives in public/chart-shared.js, also loaded by the
+// browser for the range chips, so server and client can't drift apart.
+const Chart = require('../public/chart-shared.js');
+
+// "YYYY-MM-DD" -> "DD.MM.YYYY", in full so the chip is unambiguous on its own.
+function fullDate(dateStr) {
+  return new Date(dateStr + 'T00:00:00Z').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
 }
 
-// Invisible hover columns spanning the full chart height, one per data
-// point (not just a small circle around the line – this way you can hover
-// anywhere in the column, not only exactly on the point). Carries
-// label/value/point position as data attributes; app.js reads them for its
-// own styled tooltip (see #chart-tooltip in statsChart()).
-function chartHoverBands(points, values, pointLabels) {
-  const n = points.length;
-  const spacing = n > 1 ? CHART_W / (n - 1) : CHART_W;
-  return points.map((p, i) => {
-    const left = Math.max(0, p.x - spacing / 2);
-    const right = Math.min(CHART_W, p.x + spacing / 2);
-    const label = pointLabels?.[i] ?? '';
-    return `<rect class="chart-hover" x="${left.toFixed(1)}" y="0" width="${(right - left).toFixed(1)}" height="190" fill="transparent" data-label="${esc(label)}" data-value="${values[i]}" data-px="${p.x.toFixed(1)}" data-py="${p.y.toFixed(1)}"/>`;
-  }).join('');
+// "vor 3 Std." / "gestern" / "vor 12 Tagen"; older than a month: the date.
+const relTimeFmt = new Intl.RelativeTimeFormat('de', { numeric: 'auto', style: 'short' });
+function relTime(iso) {
+  const sec = Math.round((Date.now() - parseDbDate(iso).getTime()) / 1000);
+  if (sec < 60) return 'gerade eben';
+  if (sec < 3600) return relTimeFmt.format(-Math.floor(sec / 60), 'minute');
+  if (sec < 86400) return relTimeFmt.format(-Math.floor(sec / 3600), 'hour');
+  if (sec < 30 * 86400) return relTimeFmt.format(-Math.floor(sec / 86400), 'day');
+  return parseDbDate(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
 }
 
-// Complete chart including the time-range chips. The server fully renders
-// the "Monat" range (works without JS), the other three ranges travel along
-// as a data attribute – app.js redraws on chip click via a chartGeometry
-// equivalent, without a server request.
-// Positions every axis label at its real data-point index (not evenly
-// spaced) – otherwise e.g. a forced last label (uneven spacing from the
-// second-to-last) would drift from the actual point.
-function xLabelsHtml(labels, n) {
-  return labels.map(({ i, text }) => {
-    const pct = n > 1 ? (i / (n - 1)) * 100 : 50;
-    return `<span style="left:${pct.toFixed(2)}%">${esc(text)}</span>`;
-  }).join('');
+// Fixed core numbers, independent of the chart's range chips.
+function kpiCard({ link, stats }) {
+  const perDayDays = Math.max(1, Math.min(30, Math.ceil((Date.now() - parseDbDate(link.created_at).getTime()) / 86400000)));
+  const avg = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(stats.ranges.monat.total / perDayDays);
+  const tile = (value, label, title = '') => `<div class="stat-kpi"${title ? ` title="${esc(title)}"` : ''}><b>${value}</b><span>${label}</span></div>`;
+  return `<section class="card kpi-card" aria-labelledby="kpi-title">
+  <h2 id="kpi-title" class="sr-only">Auf einen Blick</h2>
+  <div class="stat-kpis">
+    ${tile(fmtNum(stats.recentTotal), 'Klicks gesamt')}
+    ${tile(fmtNum(stats.ranges.tag.total), 'Heute')}
+    ${tile(fmtNum(stats.ranges.woche.total), 'Letzte 7 Tage')}
+    ${tile(fmtNum(stats.ranges.monat.total), 'Letzte 30 Tage')}
+    ${tile(avg, `Ø pro Tag (${perDayDays} ${perDayDays === 1 ? 'Tag' : 'Tage'})`)}
+    ${stats.lastClickTs ? tile(esc(relTime(stats.lastClickTs)), 'Letzter Klick', fmtDate(stats.lastClickTs)) : tile('–', 'Letzter Klick')}
+  </div>
+</section>`;
 }
 
-function statsChart(total, ranges) {
-  const initial = ranges.monat;
-  const { linePath, areaPath, points, max, mid } = chartGeometry(initial.values);
+function statsChart(ranges, linkId, initialRange = 'monat', customFromTo = null) {
+  const initial = ranges[initialRange] || ranges.monat;
+  const { linePath, partialPath, areaPath, points, ticks } = Chart.chartGeometry(initial.values, initial.partialLast);
+  const grid = Chart.gridHtml(ticks, fmtNum);
+  const axisStyle = `--axis-w:${Chart.axisWidthPx(ticks.map(t => fmtNum(t.value)))}px`;
   const rangesForJs = {};
   for (const [key, r] of Object.entries(ranges)) {
-    rangesForJs[key] = { label: r.label, total: r.total, values: r.values, labels: r.labels, pointLabels: r.pointLabels };
+    rangesForJs[key] = { label: r.label, total: r.total, values: r.values, labels: r.labels, pointLabels: r.pointLabels, partialLast: !!r.partialLast };
   }
+  // Rolling windows, not calendar periods – "Woche"/"Monat"/"Jahr" would
+  // suggest fixed calendar blocks.
+  const fixedChips = [['tag', 'Heute'], ['woche', '7 Tage'], ['monat', '30 Tage'], ['jahr', '12 Monate'], ['gesamt', 'Gesamt']]
+    .map(([key, label]) => `<button type="button" class="range-btn${initialRange === key ? ' active' : ''}" data-range="${key}" aria-pressed="${initialRange === key}">${label}</button>`)
+    .join('');
+  // <details>/<summary> instead of a JS popover: works without JS and needs no
+  // click-outside/Escape handling. The summary doubles as the 6th chip once a
+  // custom range is active (data-range="custom", see app.js); before that it is
+  // a plain trigger without data-range.
+  const customActive = initialRange === 'custom';
+  const customLabel = ranges.custom ? `${esc(fullDate(customFromTo.from))}–${esc(fullDate(customFromTo.to))}` : 'Zeitraum';
+  const customDataRange = ranges.custom ? ' data-range="custom"' : '';
   return `
 <div class="stat-header">
-  <div class="stat-row">
-    <h2 style="margin:0">Statistik</h2>
-    <span class="num"><b id="stat-total-all">${fmtNum(total)}</b> <span>gesamt</span></span>
-    <span class="num"><b id="stat-total-range">${fmtNum(initial.total)}</b> <span id="stat-range-label">${initial.label}</span></span>
-  </div>
+  <h2>Klickverlauf</h2>
   <div class="range-group" id="stats-range-group" role="group" aria-label="Zeitraum" data-ranges="${esc(JSON.stringify(rangesForJs))}">
-    <button type="button" class="range-btn" data-range="tag">Tag</button>
-    <button type="button" class="range-btn" data-range="woche">Woche</button>
-    <button type="button" class="range-btn active" data-range="monat">Monat</button>
-    <button type="button" class="range-btn" data-range="jahr">Jahr</button>
-    <button type="button" class="range-btn" data-range="gesamt">Gesamt</button>
+    ${fixedChips}
+    <details class="range-custom-details">
+      <summary class="range-btn range-custom-trigger${customActive ? ' active' : ''}"${customDataRange}>${customLabel}</summary>
+      <div class="custom-range-panel">
+        <form class="custom-range-form" method="get" action="/app/links/${linkId}">
+          <div class="field">
+            <label for="range-from">Von</label>
+            <input id="range-from" type="date" name="from" autocomplete="off" value="${esc(customFromTo?.from || '')}">
+          </div>
+          <div class="field">
+            <label for="range-to">Bis</label>
+            <input id="range-to" type="date" name="to" autocomplete="off" value="${esc(customFromTo?.to || '')}">
+          </div>
+          <button type="submit" class="btn ghost">Anzeigen</button>
+        </form>
+      </div>
+    </details>
+    ${ranges.custom ? `<a href="/app/links/${linkId}" class="range-clear-btn" title="Zeitraum zurücksetzen" aria-label="Benutzerdefinierten Zeitraum zurücksetzen">×</a>` : ''}
   </div>
 </div>
-<div class="chart-wrap" id="stats-chart">
-  <svg class="chart-svg" id="chart-svg" viewBox="0 0 ${CHART_W} 190" preserveAspectRatio="none" role="img" aria-label="Klicks im Zeitverlauf">
-    <line x1="0" y1="${CHART_TOP}" x2="${CHART_W}" y2="${CHART_TOP}" class="chart-grid"/>
-    <line x1="0" y1="100" x2="${CHART_W}" y2="100" class="chart-grid"/>
-    <line x1="0" y1="${CHART_BASE}" x2="${CHART_W}" y2="${CHART_BASE}" class="chart-grid chart-grid-base"/>
+<div class="chart-wrap" id="stats-chart" style="${axisStyle}">
+  <svg class="chart-svg" id="chart-svg" viewBox="0 0 ${Chart.CHART_W} ${Chart.CHART_H}" preserveAspectRatio="none" role="img" aria-label="${esc(Chart.chartSummary(initial.label, initial.total, initial.values, initial.pointLabels, fmtNum))}">
+    <g id="chart-grid">${grid.lines}</g>
     <path class="chart-area" id="chart-area" d="${areaPath}"/>
     <path class="chart-line" id="chart-line" d="${linePath}"/>
-    <g id="chart-hover-group">${chartHoverBands(points, initial.values, initial.pointLabels)}</g>
+    <path class="chart-line chart-line-partial" id="chart-line-partial" d="${partialPath}"/>
+    <g id="chart-hover-group">${Chart.hoverBandsHtml(points, initial.values, initial.pointLabels)}</g>
   </svg>
-  <span class="chart-label" id="chart-label-max" style="top:2px">${fmtNum(max)}</span>
-  <span class="chart-label" id="chart-label-mid" style="top:88px">${fmtNum(mid)}</span>
-  <div class="chart-hover-point" id="chart-hover-dot"></div>
-  <div class="chart-tooltip" id="chart-tooltip">
+  <div id="chart-y-labels" aria-hidden="true">${grid.labels}</div>
+  <div class="chart-hover-point" id="chart-hover-dot" aria-hidden="true"></div>
+  <div class="chart-tooltip" id="chart-tooltip" aria-hidden="true">
     <div class="chart-tooltip-title" id="chart-tooltip-title"></div>
     <div class="chart-tooltip-row"><span class="chart-tooltip-dot"></span>Klicks<b id="chart-tooltip-value"></b></div>
   </div>
 </div>
-<div class="chart-x-labels" id="chart-x-labels">${xLabelsHtml(initial.labels, initial.values.length)}</div>`;
+<div class="chart-x-labels" id="chart-x-labels" style="${axisStyle}" aria-hidden="true">${Chart.xLabelsHtml(initial.labels, initial.values.length)}</div>`;
 }
 
-function splitBreakdownList(rows) {
+const pctFormat = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Percentages are shares of ALL clicks (allClicks), not of the fetched rows:
+// queries are capped (100), so summing only those would inflate every share;
+// the remainder becomes a static "Weitere" tail row.
+//
+// More than `limit` entries: top `limit` plus one clickable "Weitere (n)" row
+// opening a <dialog> (data-open-dialog, see app.js) with all entries. Without
+// `id` (devices) the list is always shown in full.
+const clicksLabel = (n) => `${fmtNum(n)} ${n === 1 ? 'Klick' : 'Klicks'}`;
+
+function splitBreakdownList(rows, allClicks, { title = '', id = '', limit = 5 } = {}) {
   if (!rows.length) return `<p class="muted">Noch keine Daten.</p>`;
-  const total = rows.reduce((a, r) => a + r.n, 0);
-  return `<ul class="split">` + rows.map(r => {
-    const pct = Math.round((r.n / total) * 100);
-    const name = r.ref ?? r.device ?? r.browser ?? '–';
-    return `<li>
-      <div class="row"><span class="name">${esc(name || '–')}</span><span class="val">${pct} %</span></div>
-      <div class="meter"><span style="width:${pct}%"></span></div>
+  const shown = rows.reduce((a, r) => a + r.n, 0);
+  const base = Math.max(allClicks || 0, shown);
+  const items = rows.map(r => ({ name: r.ref ?? r.device ?? r.browser ?? r.lang ?? '–', n: r.n }));
+  // Clicks beyond the query cap: not a real entry, so not counted as one.
+  const tail = base > shown ? { name: 'Weitere', n: base - shown, rest: true } : null;
+  const full = tail ? [...items, tail] : items;
+  const pctOf = (n) => (n / base) * 100;
+  const item = (it) => {
+    const pct = pctOf(it.n);
+    const name = esc(it.name || '–');
+    return `<li${it.rest ? ' class="rest"' : ''}>
+      <div class="row"><span class="name" title="${name}">${name}</span><span class="val-n">${clicksLabel(it.n)}</span><span class="val-pct">${pctFormat.format(pct)} %</span></div>
+      <div class="meter"><span style="width:${pct.toFixed(2)}%"></span></div>
     </li>`;
-  }).join('') + `</ul>`;
+  };
+  if (!id || items.length <= limit) return `<ul class="split">${full.map(item).join('')}</ul>`;
+
+  const rest = items.slice(limit);
+  const restN = rest.reduce((a, it) => a + it.n, 0) + (tail ? tail.n : 0);
+  const restPct = pctOf(restN);
+  const more = tail ? '+' : ''; // "+" = there are even more entries than the query returned
+  const restRow = `<li class="rest">
+      <button type="button" class="rest-btn" data-open-dialog="${id}" aria-haspopup="dialog">
+        <span class="row"><span class="name">Weitere (${fmtNum(rest.length)}${more})</span><span class="val-n">${clicksLabel(restN)}</span><span class="val-pct">${pctFormat.format(restPct)} %</span></span>
+        <span class="meter"><span style="width:${restPct.toFixed(2)}%"></span></span>
+      </button>
+    </li>`;
+  const dialog = `<dialog id="${id}" class="confirm-dialog dist-dialog" aria-labelledby="${id}-title">
+    <div class="dist-dialog-head">
+      <div><h3 id="${id}-title">${esc(title)}</h3><p class="dist-dialog-sub">${fmtNum(items.length)}${more} Einträge · Anteile an allen ${fmtNum(base)} Klicks</p></div>
+      <button type="button" class="dist-dialog-close" data-close-dialog aria-label="Schließen">×</button>
+    </div>
+    <ul class="split dist-dialog-list">${full.map(item).join('')}</ul>
+  </dialog>`;
+  return `<ul class="split">${full.slice(0, limit).map(item).join('')}${restRow}</ul>${dialog}`;
 }
 
-// error/errorField/values: only set on the direct re-render after a failed
-// POST .../update (see renderLinkDetail() in server.js) – same principle as
-// dashboard() above. values, when present, overrides the DB-backed link
-// fields with what was actually submitted (so a rejected edit isn't lost),
-// and the data-utc attribute is deliberately skipped in that case – it's
-// only meaningful for the real stored value, not a raw resubmitted string.
+// error/errorField/values: only set on re-render after a failed POST .../update
+// (see renderLinkDetail() in server.js), like dashboard(). values overrides the
+// DB fields; data-utc is skipped then, as it only fits the stored value.
 function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expired, user, flash, page = 'dashboard', canEditRestricted = true, canDelete = true, audit = [], error = null, errorField = null, values = null }) {
   const v = values || { target_url: link.target_url, title: link.title, domain: link.domain, expiresAtLocal };
   const body = `
@@ -576,11 +620,10 @@ function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expir
 <nav class="crumbs"><a href="/app" data-back>← Zurück</a></nav>
 
 <div class="detail-head">
-  <h1>${esc(stripProto(origin))}<span class="accent">/${esc(link.slug)}</span></h1>
+  <h1 translate="no">${esc(stripProto(origin))}<span class="accent">/${esc(link.slug)}</span></h1>
   <button type="button" class="copy-icon-btn" data-copy="${esc(short)}" title="Link kopieren" aria-label="Link kopieren">${icon('copy', 'copy-icon')}</button>
-  ${visibilityBadge(link)}
   ${expired ? `<span class="badge expired">Abgelaufen</span>` : link.expires_at ? `<span class="muted">läuft ab ${fmtDate(link.expires_at)}</span>` : ''}
-  <button type="submit" form="edit-form" style="margin-left:auto;padding:9px 36px">Speichern</button>
+  <button type="submit" form="edit-form" class="head-action">Speichern</button>
 </div>
 
 <div class="detail-grid">
@@ -592,103 +635,113 @@ function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expir
   </div>
 </section>
 
-<div class="page">
-<section class="card">
-  <h2>Bearbeiten</h2>
-  <form id="edit-form" method="post" action="/app/links/${link.id}/update" style="display:flex;flex-direction:column;gap:16px">
+<section class="card edit-card">
+  <div class="card-head"><h2>Link-Details</h2></div>
+  <form id="edit-form" method="post" action="/app/links/${link.id}/update" class="flex-col gap-16">
     <div>
       <label for="target">Ziel-URL</label>
-      <!-- type="text" instead of type="url", see the comment at dashboard().
-           readonly (not disabled) for non-owners on org links: the value
-           still has to be submitted, otherwise server-side validation would
-           fail even though no change was intended (see POST .../update). -->
-      <input id="target" name="target_url" type="text" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required${canEditRestricted ? '' : ' readonly'}>
+      <input id="target" name="target_url" type="text" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required${canEditRestricted ? '' : ' readonly'} autocomplete="off">
       ${fieldErrorSpan('target_url', errorField, error, 'target')}
-      ${canEditRestricted ? '' : '<span class="muted" style="font-size:12.5px">Nur Besitzer:in/Admin können die Ziel-URL ändern</span>'}
+      ${canEditRestricted ? '' : '<span class="muted hint">Nur Besitzer:in/Admin können die Ziel-URL ändern</span>'}
     </div>
     <div class="grid-form">
       <div class="field">
         <label for="title">Beschreibung <span class="muted">(optional)</span></label>
-        <input id="title" name="title" type="text" value="${esc(v.title)}">
+        <input id="title" name="title" type="text" value="${esc(v.title)}" autocomplete="off">
       </div>
       ${domainField(v.domain, domains)}
       <div class="field">
         <label for="expires_at">Läuft ab <span class="muted">(optional)</span></label>
-        <input id="expires_at" name="expires_at" type="datetime-local" value="${esc(v.expiresAtLocal)}"${!values && link.expires_at ? ` data-utc="${esc(link.expires_at)}"` : ''}>
+        <input id="expires_at" name="expires_at" type="datetime-local" value="${esc(v.expiresAtLocal)}"${!values && link.expires_at ? ` data-utc="${esc(link.expires_at)}"` : ''} autocomplete="off">
       </div>
     </div>
-    <div class="radio-row divided">${visibilityRadios(link.visibility, !canEditRestricted)}</div>
+    <div class="radio-row">${visibilityRadios(v.visibility ?? link.visibility, !canEditRestricted)}</div>
   </form>
 </section>
+</div>
+
+${kpiCard({ link, stats })}
 
 <section class="card">
-  ${statsChart(stats.total, stats.ranges)}
-  <div class="cols cols-3" style="gap:24px;margin-top:20px">
-    <div><h3>Herkunft (Referrer)</h3>${splitBreakdownList(stats.referrers)}</div>
-    <div><h3>Geräte</h3>${splitBreakdownList(stats.devices)}</div>
-    <div><h3>Browser</h3>${splitBreakdownList(stats.browsers)}</div>
-  </div>
-  <h3 style="margin-top:20px">Letzte Klicks</h3>
-  ${stats.recent.length ? `<div class="table-scroll" style="border-top:none"><table class="tbl">
-    <thead><tr><th style="width:155px;white-space:nowrap">Zeitpunkt</th><th>Referrer</th><th>Gerät</th><th>Browser</th><th>Sprache</th></tr></thead>
-    <tbody>${stats.recent.map(c => `<tr>
-      <td class="cell-sub">${fmtDate(c.ts)}</td>
-      <td>${esc(c.referrer || '(direkt / QR-Scan)')}</td>
-      <td>${esc(c.device)}</td><td>${esc(c.browser)}</td><td>${esc(c.lang || '–')}</td>
-    </tr>`).join('')}</tbody>
-  </table></div>` : `<p class="muted">Noch keine Klicks.</p>`}
+  ${statsChart(stats.ranges, link.id, stats.initialRange, stats.customRange)}
 </section>
+
+<div class="detail-lower">
+<section class="card dist-card">
+  <div class="card-head"><h2>Besuchende</h2></div>
+  <div class="dist-grid">
+    <div><h3>Quelle</h3>${splitBreakdownList(stats.referrers, stats.recentTotal, { title: 'Quelle', id: 'dist-referrer' })}</div>
+    <div><h3>Geräte</h3>${splitBreakdownList(stats.devices, stats.recentTotal)}</div>
+    <div><h3>Browser</h3>${splitBreakdownList(stats.browsers, stats.recentTotal, { title: 'Browser', id: 'dist-browser' })}</div>
+    <div><h3>Sprachen</h3>${splitBreakdownList((stats.languages || []).map(r => ({ lang: r.lang_code ? langInfo(r.lang_code).name : 'Unbekannt', n: r.n })), stats.recentTotal, { title: 'Sprachen', id: 'dist-language' })}</div>
+  </div>
+</section>
+
+<section class="card" id="letzte-klicks">
+  <div class="card-head">
+    <h2>Letzte Klicks</h2>
+    ${stats.recentTotal > stats.recentSize ? `
+    <nav class="pagination-nav" aria-label="Letzte Klicks blättern">
+      <div class="pagination-arrows">
+        ${stats.recentNewerHref
+          ? `<a href="${esc(stats.recentNewerHref)}" class="pagination-arrow labeled">${icon('chevron-left', 'navicon')}<span>Neuere</span></a>`
+          : `<span class="pagination-arrow labeled disabled" role="link" aria-disabled="true">${icon('chevron-left', 'navicon')}<span>Neuere</span></span>`}
+        ${stats.recentOlderHref
+          ? `<a href="${esc(stats.recentOlderHref)}" class="pagination-arrow labeled"><span>Ältere</span>${icon('chevron-right', 'navicon')}</a>`
+          : `<span class="pagination-arrow labeled disabled" role="link" aria-disabled="true"><span>Ältere</span>${icon('chevron-right', 'navicon')}</span>`}
+      </div>
+    </nav>` : ''}
+  </div>
+  ${stats.recent.length ? recentClicksTable(stats.recent) : `<p class="muted">Noch keine Klicks.</p>`}
+  ${stats.recent.length && stats.recentTotal > stats.recentSize ? `
+  <p class="range-info table-foot">${fmtNum(stats.recentFrom)}–${fmtNum(stats.recentFrom + stats.recent.length - 1)} von ${fmtNum(stats.recentTotal)}</p>` : ''}
+</section>
+</div>
 
 ${audit.length ? `
 <section class="card">
   <h2>Änderungsverlauf der Ziel-URL</h2>
-  <div class="table-scroll" style="border-top:none"><table class="tbl">
-    <thead><tr><th style="width:155px;white-space:nowrap">Zeitpunkt</th><th>Von</th><th>Alte URL</th><th>Neue URL</th></tr></thead>
+  <div class="table-scroll"><table class="tbl">
+    <thead><tr><th class="th-date">Zeitpunkt</th><th>Von</th><th>Alte URL</th><th>Neue URL</th></tr></thead>
     <tbody>${audit.map(a => `<tr>
       <td class="cell-sub">${fmtDate(a.ts)}</td>
       <td>${esc(a.username || '–')}</td>
-      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.old_url)}">${esc(a.old_url)}</td>
-      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(a.new_url)}">${esc(a.new_url)}</td>
+      <td class="cell-ellipsis" title="${esc(a.old_url)}">${esc(a.old_url)}</td>
+      <td class="cell-ellipsis" title="${esc(a.new_url)}">${esc(a.new_url)}</td>
     </tr>`).join('')}</tbody>
   </table></div>
 </section>` : ''}
 
 ${canDelete ? `
-<section class="card danger danger-confirm">
-  <div class="copy"><b>Link löschen</b>
-    <p>Zur Bestätigung bitte das Kürzel eintippen. Mit dem Löschen werden auch alle Klickdaten gelöscht, und bereits gedruckte QR-Codes laufen danach ins Leere.</p>
+<section class="card danger danger-confirm" aria-labelledby="delete-title">
+  <div class="copy">
+    <h2 id="delete-title">Link löschen</h2>
+    <p>Löscht den Link samt aller Klickdaten. Bereits gedruckte QR-Codes laufen danach ins Leere. Zur Bestätigung bitte <b translate="no">${esc(link.slug)}</b> eintippen.</p>
   </div>
   <form method="post" action="/app/links/${link.id}/delete" data-confirm="Diesen Link wirklich löschen?">
-    <input type="text" data-confirm-slug="${esc(link.slug)}" placeholder="${esc(link.slug)} eintippen…" aria-label="Kürzel zur Bestätigung eingeben" autocomplete="off">
+    <input type="text" data-confirm-slug="${esc(link.slug)}" placeholder="Kürzel eintippen…" aria-label="Kürzel zur Bestätigung eingeben" autocomplete="off">
     <button class="destructive-ghost" type="submit">Löschen…</button>
   </form>
 </section>` : ''}
-</div>
-</div>
 </div>
 </main>`;
   return layout({ title: `/${link.slug}`, body, user, flash, page });
 }
 
-// Only foreground/background color (no logo/shapes) – deliberately the
-// first, simple step toward an "actually used" tool, see chat context.
 function colorFields(dark, light, transparentBg) {
-  // The native picker doesn't know alpha (6-digit hex only) – a value
-  // resolved with transparency (#rrggbbaa) is truncated for display, the
-  // full value only travels along hidden for the download (see dlFields).
+  // The native picker has no alpha (6-digit hex): #rrggbbaa is truncated for
+  // display, the full value travels hidden for the download (see dlFields).
   const lightSwatch = light.slice(0, 7);
   return `<div class="color-pills">
     <span class="label-inline">Farben:</span>
     <label>Vordergrund <input type="color" name="dark" value="${esc(dark)}"></label>
     <label>Hintergrund <input type="color" name="light" value="${esc(lightSwatch)}"></label>
-    <label style="margin-left:12px"><input type="checkbox" name="light_transparent" value="1" ${transparentBg ? 'checked' : ''}> Hintergrund transparent</label>
+    <label class="label-indent"><input type="checkbox" name="light_transparent" value="1" ${transparentBg ? 'checked' : ''}> Hintergrund transparent</label>
   </div>`;
 }
 
-// Type selection as CSS-only tabs (hidden radio + label/span), so switching
-// still works without JS: :has() on .qr-form decides which .qr-type-panel
-// is visible (see style.css). The order/tab IDs here and the style.css
-// selectors have to match up.
+// CSS-only tabs (hidden radio + label): :has() on .qr-form picks the visible
+// .qr-type-panel (see style.css); tab IDs here must match the selectors there.
 const QR_TYPES = [
   ['url', 'URL'],
   ['text', 'Text'],
@@ -701,14 +754,10 @@ function qrTypeTabs(active) {
   </div>`;
 }
 
-// All four panels are always rendered (only one visible), so switching
-// doesn't lose values and every tab's form data arrives on submit – server.js
-// only reads the active qr_type's data anyway. Fields grouped in
-// .grid-form/.field like dashboard()/"Erstellen", even with just one field
-// per row (see the description row there).
-// url_value deliberately type="text" instead of type="url": browsers reject
-// type="url" input without a scheme (e.g. "example.com") via native
-// validation before server.js can even prepend "https://" (see
+// All four panels are always rendered (one visible), so switching keeps
+// values; server.js only reads the active qr_type's data.
+// url_value is type="text", not "url": native validation would reject a
+// scheme-less input before server.js can prepend "https://" (see
 // buildQrTypeContent).
 function qrTypePanels(v) {
   return `
@@ -716,7 +765,7 @@ function qrTypePanels(v) {
     <div class="grid-form">
       <div class="field grow">
         <label for="url_value">Ziel-URL</label>
-        <input id="url_value" name="url_value" type="text" placeholder="https://…" value="${esc(v.url_value)}">
+        <input id="url_value" name="url_value" type="text" placeholder="https://…" value="${esc(v.url_value)}" autocomplete="off">
       </div>
     </div>
   </div>
@@ -724,14 +773,14 @@ function qrTypePanels(v) {
     <div class="grid-form">
       <div class="field grow">
         <label for="data">Inhalt</label>
-        <textarea id="data" name="data" rows="3">${esc(v.data)}</textarea>
+        <textarea id="data" name="data" rows="3" autocomplete="off">${esc(v.data)}</textarea>
       </div>
     </div>
   </div>
   <div class="qr-type-panel" data-panel="wlan">
     <div class="grid-form">
-      <div class="field"><label for="wlan_ssid">SSID</label><input id="wlan_ssid" name="wlan_ssid" type="text" value="${esc(v.wlan_ssid)}"></div>
-      <div class="field"><label for="wlan_pass">Passwort</label><input id="wlan_pass" name="wlan_pass" type="text" value="${esc(v.wlan_pass)}"></div>
+      <div class="field"><label for="wlan_ssid">SSID</label><input id="wlan_ssid" name="wlan_ssid" type="text" value="${esc(v.wlan_ssid)}" autocomplete="off"></div>
+      <div class="field"><label for="wlan_pass">Passwort</label><input id="wlan_pass" name="wlan_pass" type="text" value="${esc(v.wlan_pass)}" autocomplete="off"></div>
       <div class="field">
         <label for="wlan_enc">Verschlüsselung</label>
         <select id="wlan_enc" name="wlan_enc">
@@ -744,40 +793,37 @@ function qrTypePanels(v) {
   </div>
   <div class="qr-type-panel" data-panel="epc">
     <div class="grid-form">
-      <div class="field grow"><label for="epc_name">Begünstigter</label><input id="epc_name" name="epc_name" type="text" maxlength="70" value="${esc(v.epc_name)}"></div>
-      <div class="field"><label for="epc_iban">IBAN</label><input id="epc_iban" name="epc_iban" type="text" placeholder="DE00…" spellcheck="false" value="${esc(v.epc_iban)}"></div>
+      <div class="field grow"><label for="epc_name">Begünstigter</label><input id="epc_name" name="epc_name" type="text" maxlength="70" value="${esc(v.epc_name)}" autocomplete="off"></div>
+      <div class="field"><label for="epc_iban">IBAN</label><input id="epc_iban" name="epc_iban" type="text" placeholder="DE00…" spellcheck="false" value="${esc(v.epc_iban)}" autocomplete="off"></div>
     </div>
     <div class="grid-form">
-      <div class="field"><label for="epc_bic">BIC <span class="muted">(optional)</span></label><input id="epc_bic" name="epc_bic" type="text" placeholder="nur außerhalb SEPA nötig" spellcheck="false" value="${esc(v.epc_bic)}"></div>
-      <div class="field"><label for="epc_amount">Betrag (EUR) <span class="muted">(optional)</span></label><input id="epc_amount" name="epc_amount" type="number" step="0.01" min="0" value="${esc(v.epc_amount)}"></div>
-      <div class="field grow"><label for="epc_purpose">Verwendungszweck <span class="muted">(optional)</span></label><input id="epc_purpose" name="epc_purpose" type="text" maxlength="140" value="${esc(v.epc_purpose)}"></div>
+      <div class="field"><label for="epc_bic">BIC <span class="muted">(optional)</span></label><input id="epc_bic" name="epc_bic" type="text" placeholder="nur außerhalb SEPA nötig…" spellcheck="false" value="${esc(v.epc_bic)}" autocomplete="off"></div>
+      <div class="field"><label for="epc_amount">Betrag (EUR) <span class="muted">(optional)</span></label><input id="epc_amount" name="epc_amount" type="number" step="0.01" min="0" value="${esc(v.epc_amount)}" autocomplete="off"></div>
+      <div class="field grow"><label for="epc_purpose">Verwendungszweck <span class="muted">(optional)</span></label><input id="epc_purpose" name="epc_purpose" type="text" maxlength="140" value="${esc(v.epc_purpose)}" autocomplete="off"></div>
     </div>
   </div>`;
 }
 
-// Same basic layout as linkDetail() (.detail-grid + .qrbox on the left): QR
-// preview on the left, form on the right as a card. Unlike there, the
-// preview only appears after the first "Erzeugen" click – until then the
-// qrbox shows placeholder text.
+// Layout like linkDetail(), but the preview only appears after the first
+// "Erzeugen" click; until then the qrbox shows placeholder text.
 function staticQrPage({ content = '', ec = 'M', dark = '#000000', light = '#ffffff', transparentBg = false, svg = null, error = null, user, values = {} } = {}) {
   const v = {
     type: 'url', data: '', url_value: '', wlan_ssid: '', wlan_pass: '', wlan_enc: 'WPA',
     epc_name: '', epc_iban: '', epc_bic: '', epc_amount: '', epc_purpose: '',
     ...values,
   };
-  // Hidden fields for the POST downloads: the already-resolved content
-  // (not the individual tab fields) travels in the body, not the URL – so
-  // it never ends up in history or access logs.
+  // Resolved content travels in the POST body, not the URL, so it never ends
+  // up in history or access logs.
   const dlFields = `<input type="hidden" name="data" value="${esc(content)}"><input type="hidden" name="ec" value="${esc(ec)}"><input type="hidden" name="dark" value="${esc(dark)}"><input type="hidden" name="light" value="${esc(light)}">`;
   const body = `
 <main>
 <div class="page">
-<div style="display:flex;flex-direction:column;gap:6px">
+<div class="flex-col gap-6">
   <div class="detail-head">
     <h1>Statischer QR-Code Generator</h1>
-    <button type="submit" form="qr-form" style="margin-left:auto;padding:9px 36px">Erzeugen</button>
+    <button type="submit" form="qr-form" class="head-action">Erzeugen</button>
   </div>
-  <p class="muted" style="margin:0">Inhalt landet direkt im QR-Code — anders als bei „Erstellen" nicht mehr änderbar, ohne Statistik, ohne Speicherung.</p>
+  <p class="muted flush">Inhalt landet direkt im QR-Code — anders als bei „Erstellen" nicht mehr änderbar, ohne Statistik, ohne Speicherung.</p>
 </div>
 
 <div class="detail-grid">
@@ -787,15 +833,15 @@ function staticQrPage({ content = '', ec = 'M', dark = '#000000', light = '#ffff
   <div class="dl">
     <form method="post" action="/app/qr/download">${dlFields}<input type="hidden" name="format" value="svg"><button class="btn ghost" type="submit">SVG</button></form>
     <form method="post" action="/app/qr/download">${dlFields}<input type="hidden" name="format" value="png"><button class="btn ghost" type="submit">PNG</button></form>
-  </div>` : `<p class="muted" style="margin:0">Vorschau erscheint hier, sobald du „Erzeugen" klickst.</p>`}
+  </div>` : `<p class="muted flush">Vorschau erscheint hier, sobald du „Erzeugen" klickst.</p>`}
 </section>
 
 <section class="card">
   ${error ? `<div class="flash error">${esc(error)}</div>` : ''}
-  <form id="qr-form" method="post" action="/app/qr" class="qr-form" style="display:flex;flex-direction:column;gap:20px">
+  <form id="qr-form" method="post" action="/app/qr" class="qr-form flex-col">
     ${qrTypeTabs(v.type)}
     ${qrTypePanels(v)}
-    <div class="radio-row divided">
+    <div class="radio-row">
       ${colorFields(dark, light, transparentBg)}
     </div>
   </form>
@@ -824,9 +870,8 @@ function userTableRow(u, currentUser) {
 </tr>`;
 }
 
-// Zwei eigenständige Seiten (/app/users, /app/domains) unter einem gemeinsamen
-// Titel – echte Links statt Client-Toggle, damit Zurück/Vorwärts und direkte
-// URLs funktionieren.
+// Echte Links statt Client-Toggle, damit Zurück/Vorwärts und direkte URLs
+// funktionieren.
 function adminTabs(page) {
   const tabs = [
     ['users', '/app/users', 'Zugangsverwaltung'],
@@ -839,10 +884,8 @@ function adminTabs(page) {
   </div>`;
 }
 
-// error/errorField/values: only set on the direct re-render after a failed
-// POST /app/users (see server.js) – same principle as dashboard() above.
-// Password is deliberately never part of `values` – re-echoing a rejected
-// password back into the form isn't worth the security/UX tradeoff.
+// error/errorField/values: see dashboard(). The password is deliberately never
+// part of `values` – not re-echoed into the form.
 function usersPage({ users, user, flash, error = null, errorField = null, values = {} }) {
   const v = { username: '', role: 'member', ...values };
   const body = `
@@ -857,12 +900,12 @@ ${adminTabs('users')}
   <form method="post" action="/app/users" class="grid-form">
     <div class="field">
       <label for="nu">Nutzername</label>
-      <input id="nu" name="username" type="text" pattern="[A-Za-z0-9\\-_.]{2,32}" placeholder="clara" value="${esc(v.username)}"${fieldInvalidAttrs('username', errorField, 'nu')} spellcheck="false" required>
+      <input id="nu" name="username" type="text" pattern="[A-Za-z0-9\\-_.]{2,32}" placeholder="clara…" value="${esc(v.username)}"${fieldInvalidAttrs('username', errorField, 'nu')} spellcheck="false" required autocomplete="off">
       ${fieldErrorSpan('username', errorField, error, 'nu')}
     </div>
     <div class="field">
       <label for="np">Startpasswort</label>
-      <input id="np" name="password" type="text" minlength="8" placeholder="mind. 8 Zeichen"${fieldInvalidAttrs('password', errorField, 'np')} autocomplete="off" required>
+      <input id="np" name="password" type="text" minlength="8" placeholder="mind. 8 Zeichen…"${fieldInvalidAttrs('password', errorField, 'np')} autocomplete="off" required>
       ${fieldErrorSpan('password', errorField, error, 'np')}
     </div>
     <div class="field">
@@ -888,7 +931,7 @@ ${adminTabs('users')}
 <dialog id="delete-user-dialog" class="confirm-dialog" data-users='${esc(JSON.stringify(users.map(u => ({ id: u.id, username: u.username }))))}' data-current-user="${user.id}">
   <h3>Account löschen</h3>
   <p class="confirm-dialog-text"></p>
-  <div class="grid-form" style="margin-bottom:20px">
+  <div class="grid-form mb-20">
     <div class="field grow">
       <label for="reassign-to">Links übertragen an</label>
       <select id="reassign-to" name="reassign_to"></select>
@@ -904,15 +947,9 @@ ${adminTabs('users')}
   return layout({ title: 'Zugangsverwaltung', body, user, flash, page: 'users' });
 }
 
-// Same table scaffold as the dashboard/vaults (searchTable() + .linktable),
-// so app.js's search/pagination (generic via #links-search/.linktable)
-// applies here too without any extra code.
-// .cell-sub instead of .slug: .slug is always a real, clickable short link
-// everywhere else in the app – here the domain name is just text, and
-// .slug's styling would suggest clickability that doesn't exist. isDefault
-// (only relevant with more than one domain) drives both the badge and
-// whether "Als Standard setzen" is needed – with only one domain there's
-// nothing for it to stand out from.
+// .cell-sub instead of .slug: .slug styling implies a clickable short link,
+// but the domain here is plain text. isDefault only matters with more than one
+// domain (drives the badge and "Als Standard setzen").
 function domainTableRow(d, isDefault, showDefaultControl) {
   const searchHay = esc(stripProto(d.origin)).toLowerCase();
   return `
@@ -934,8 +971,7 @@ function domainTableRow(d, isDefault, showDefaultControl) {
 </tr>`;
 }
 
-// error/errorField/values: only set on the direct re-render after a failed
-// POST /app/domains (see server.js) – same principle as dashboard() above.
+// error/errorField/values: see dashboard().
 function domainsPage({ domains, user, flash, error = null, errorField = null, values = {} }) {
   const v = { origin: '', ...values };
   const body = `
@@ -948,10 +984,7 @@ ${adminTabs('domains')}
   <form method="post" action="/app/domains" class="grid-form">
     <div class="field grow">
       <label for="origin">Domain</label>
-      <!-- type="text" instead of type="url": browsers reject type="url"
-           input without a scheme natively, before server.js can prepend
-           "https://" (readLinkFields/POST /app/domains, see URI_SCHEME_RE). -->
-      <input id="origin" name="origin" type="text" placeholder="example.com…" value="${esc(v.origin)}"${fieldInvalidAttrs('origin', errorField, 'origin')} spellcheck="false" required>
+      <input id="origin" name="origin" type="text" placeholder="example.com…" value="${esc(v.origin)}"${fieldInvalidAttrs('origin', errorField, 'origin')} spellcheck="false" required autocomplete="off">
       ${fieldErrorSpan('origin', errorField, error, 'origin')}
     </div>
     <div class="field submit"><button type="submit">Hinzufügen</button></div>
@@ -961,7 +994,7 @@ ${adminTabs('domains')}
 <section>
   ${searchTable({
     links: domains,
-    theadHtml: `<th>Domain</th><th style="width:155px;white-space:nowrap">Hinzugefügt am</th><th style="width:50px;white-space:nowrap">Links</th><th style="width:450px"></th>`,
+    theadHtml: `<th>Domain</th><th class="th-date">Hinzugefügt am</th><th class="th-narrow">Links</th><th class="th-actions"></th>`,
     rowsHtml: domains.map((d, i) => domainTableRow(d, i === 0, domains.length > 1)).join(''),
     emptyText: 'Keine Domain konfiguriert — Kurzlinks nutzen automatisch die Adresse, unter der die Seite aufgerufen wird.',
     showSearch: false,
@@ -977,10 +1010,10 @@ function accountPage({ user, flash }) {
 <main>
 <div class="page">
 <h1>Konto</h1>
-<section class="card" style="max-width:400px">
+<section class="card card-narrow">
   <h2>Passwort ändern</h2>
   ${user.sso_subject ? `
-  <p class="muted" style="line-height:1.55">Dieser Account ist über SSO angebunden — das Passwort wird bei deinem Identity Provider verwaltet, nicht in snar.</p>` : `
+  <p class="muted prose">Dieser Account ist über SSO angebunden — das Passwort wird bei deinem Identity Provider verwaltet, nicht in snar.</p>` : `
   <form id="password-form" method="post" action="/app/account/password" class="stack">
     <div><label for="cp">Aktuelles Passwort</label>
     <input id="cp" name="current" type="password" autocomplete="current-password" required></div>
@@ -990,9 +1023,9 @@ function accountPage({ user, flash }) {
     <input id="np3" name="next_repeat" type="password" autocomplete="new-password" minlength="8" required></div>
     <button type="submit">Passwort ändern</button>
   </form>
-  <p class="muted" style="margin-top:15px;line-height:1.55">Nur gegen aktuelles Passwort möglich. Andere Geräte werden dabei abgemeldet — dieses bleibt angemeldet.</p>`}
+  <p class="muted prose mt-15">Nur gegen aktuelles Passwort möglich. Andere Geräte werden dabei abgemeldet — dieses bleibt angemeldet.</p>`}
 </section>
-<section class="card" style="max-width:400px">
+<section class="card card-narrow">
   <h2>Sitzung</h2>
   <form method="post" action="/logout">
     <button type="submit" class="btn ghost">Abmelden</button>

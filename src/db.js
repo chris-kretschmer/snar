@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS links (
   owner_id   INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  domain     TEXT NOT NULL DEFAULT '',           -- e.g. https://example.com; backfilled per-request if empty (see server.js)
+  domain     TEXT NOT NULL DEFAULT '',           -- e.g. https://example.com; empty rows are backfilled once at startup (server.js)
   expires_at TEXT                                -- NULL = never expires; same format as other timestamps ('YYYY-MM-DD HH:MM:SS', UTC)
 );
 
@@ -46,6 +46,13 @@ CREATE TABLE IF NOT EXISTS clicks (
   lang     TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_clicks_link_ts ON clicks(link_id, ts);
+-- Backs the "Letzte Klicks" keyset pagination (recentClicksFirst/Older/Newer
+-- in stmts below): WHERE link_id = ? AND id < ? / id > ? ORDER BY id
+-- DESC/ASC needs id itself in the index, not just ts – without this, SQLite still
+-- has to sort matching rows by id after the fact instead of walking them
+-- off the index directly, quietly reintroducing the "gets slower on deep
+-- pages" cost the keyset approach exists to avoid.
+CREATE INDEX IF NOT EXISTS idx_clicks_link_id ON clicks(link_id, id);
 -- Dashboard/personal vault filter by owner_id, shared vault by visibility –
 -- without an index this would be a full table scan over links on every request.
 CREATE INDEX IF NOT EXISTS idx_links_owner ON links(owner_id);
@@ -111,10 +118,8 @@ function verifyPassword(pw, stored) {
   return hash.length === expected.length && crypto.timingSafeEqual(hash, expected);
 }
 
-// Shared base for every "list of links with owner name + click count" query
-// below (linksByOwner/linksByOwnerPrivate/vaultLinks) – only WHERE/ORDER BY
-// differ between them, so a future change to the click-count join only needs
-// to happen here instead of three times in sync.
+// Shared base for the "links + owner name + click count" queries below;
+// only WHERE/ORDER BY differ.
 const LINKS_BASE = `
   SELECT l.*, u.username AS owner_name, COUNT(c.id) AS clicks_total
   FROM links l
@@ -136,6 +141,9 @@ const stmts = {
   countUsers: db.prepare(`SELECT COUNT(*) AS n FROM users`),
   countAdmins: db.prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin'`),
   deleteUser: db.prepare(`DELETE FROM users WHERE id = ?`),
+  // link_audit.user_id has no ON DELETE action: detach the log rows first, or
+  // deleting a user who ever changed a target URL fails on the FK.
+  clearAuditUser: db.prepare(`UPDATE link_audit SET user_id = NULL WHERE user_id = ?`),
   updatePassword: db.prepare(`UPDATE users SET password_hash = ? WHERE id = ?`),
   bumpTokenVersion: db.prepare(`UPDATE users SET token_version = token_version + 1 WHERE id = ?`),
   touchLastLogin: db.prepare(`UPDATE users SET last_login_at = datetime('now') WHERE id = ?`),
@@ -154,48 +162,34 @@ const stmts = {
     WHERE la.link_id = ? ORDER BY la.ts DESC LIMIT 25
   `),
   linksByOwner: db.prepare(`${LINKS_BASE} WHERE l.owner_id = ? GROUP BY l.id ORDER BY l.created_at DESC`),
-  // Personal vault: only the user's own links with visibility "privat"
-  // (the dashboard/"create" view still shows all of the user's own links,
-  // including org links).
+  // Personal vault: own links with visibility "privat" only.
   linksByOwnerPrivate: db.prepare(`${LINKS_BASE} WHERE l.owner_id = ? AND l.visibility = 'privat' GROUP BY l.id ORDER BY l.created_at DESC`),
-  // Same click JOIN as linksByOwner: any member may open an org link and see
-  // its full stats via "Details" (see canManage in server.js), so the total
-  // click count already belongs in the vault overview.
+  // Includes click counts: any member may open an org link's full stats (see canManage in server.js).
   vaultLinks: db.prepare(`${LINKS_BASE} WHERE l.visibility = 'org' GROUP BY l.id ORDER BY l.title COLLATE NOCASE, l.slug`),
 
-  // Domains (manageable under /app/domains, admin-only). sort_order first,
-  // id as a tiebreaker (stable order among equal sort_order, e.g. all left
-  // at 0) – the lowest sort_order is the default domain.
+  // Domains (admin-only, /app/domains): lowest sort_order = default domain, id as tiebreaker.
   listDomains: db.prepare(`
     SELECT d.*, COUNT(l.id) AS links_count
     FROM domains d LEFT JOIN links l ON l.domain = d.origin
     GROUP BY d.id ORDER BY d.sort_order ASC, d.id ASC
   `),
-  // Same order, without the join+aggregate: used everywhere only the origin
-  // strings are needed (getDomains() in server.js, on nearly every
-  // authenticated page) – links.domain has no index, so the full listDomains
-  // join would otherwise scan the entire links table on every request just
-  // to throw the counts away again.
+  // Same order without the join: getDomains() runs on nearly every request
+  // and links.domain has no index, so listDomains would scan all of links.
   listDomainOrigins: db.prepare(`SELECT origin FROM domains ORDER BY sort_order ASC, id ASC`),
   domainById: db.prepare(`SELECT * FROM domains WHERE id = ?`),
-  // Fallback domain when deleting one (see POST /app/domains/:id/delete):
-  // whichever other domain would currently be first/default.
+  // Fallback when deleting a domain (POST /app/domains/:id/delete).
   otherDomain: db.prepare(`SELECT origin FROM domains WHERE id != ? ORDER BY sort_order ASC, id ASC LIMIT 1`),
   domainExists: db.prepare(`SELECT 1 FROM domains WHERE origin = ?`),
   insertDomain: db.prepare(`INSERT INTO domains (origin) VALUES (?)`),
   deleteDomain: db.prepare(`DELETE FROM domains WHERE id = ?`),
-  // Sets sort_order strictly below the current minimum – this guarantees the
-  // domain ends up first, no matter how often it's repeated.
+  // Strictly below the current minimum: always ends up first, even when repeated.
   setDefaultDomain: db.prepare(`UPDATE domains SET sort_order = (SELECT MIN(sort_order) - 1 FROM domains) WHERE id = ?`),
   reassignLinkDomain: db.prepare(`UPDATE links SET domain = ? WHERE domain = ?`),
 
   insertClick: db.prepare(`INSERT INTO clicks (link_id, referrer, device, browser, lang) VALUES (?, ?, ?, ?, ?)`),
-  // Time-range buckets in server local time ('localtime' = OS timezone, set
-  // in the container via TZ + tzdata): storage stays UTC, but hours/days/
-  // months should cut where users actually experience the day – otherwise
-  // "today" would start at 1 or 2 a.m. The window boundaries are aligned to
-  // day/month precision (start of day/month, then back to UTC for comparing
-  // against ts).
+  // Buckets in server local time ('localtime', TZ set in the container) so
+  // "today" starts at local midnight; storage stays UTC, window starts are
+  // converted back to UTC for comparing against ts.
   clicksPerDay: db.prepare(`
     SELECT date(ts, 'localtime') AS day, COUNT(*) AS n FROM clicks
     WHERE link_id = ? AND ts >= datetime('now', 'localtime', 'start of day', ?, 'utc')
@@ -211,21 +205,51 @@ const stmts = {
     WHERE link_id = ? AND ts >= datetime('now', 'localtime', 'start of month', ?, 'utc')
     GROUP BY month
   `),
+  // Same bucketing for a custom [from, toExclusive) window. 'utc' on a bare
+  // date string reads it as local wall-clock time and shifts it to UTC.
+  clicksPerHourInRange: db.prepare(`
+    SELECT strftime('%Y-%m-%d %H', ts, 'localtime') AS bucket, COUNT(*) AS n FROM clicks
+    WHERE link_id = ? AND ts >= datetime(?, 'utc') AND ts < datetime(?, 'utc')
+    GROUP BY bucket
+  `),
+  clicksPerDayInRange: db.prepare(`
+    SELECT date(ts, 'localtime') AS day, COUNT(*) AS n FROM clicks
+    WHERE link_id = ? AND ts >= datetime(?, 'utc') AND ts < datetime(?, 'utc')
+    GROUP BY day
+  `),
+  clicksPerMonthInRange: db.prepare(`
+    SELECT strftime('%Y-%m', ts, 'localtime') AS month, COUNT(*) AS n FROM clicks
+    WHERE link_id = ? AND ts >= datetime(?, 'utc') AND ts < datetime(?, 'utc')
+    GROUP BY month
+  `),
+  // The three splits feed the top-5 lists and the "Weitere" dialog
+  // (splitBreakdownList() in views.js); capped at 100 rows, the rest is a static tail row.
   topReferrers: db.prepare(`
     SELECT CASE WHEN referrer = '' THEN '(direkt / QR-Scan)' ELSE referrer END AS ref, COUNT(*) AS n
-    FROM clicks WHERE link_id = ? GROUP BY ref ORDER BY n DESC LIMIT 8
+    FROM clicks WHERE link_id = ? GROUP BY ref ORDER BY n DESC LIMIT 100
   `),
   deviceSplit: db.prepare(`SELECT device, COUNT(*) AS n FROM clicks WHERE link_id = ? GROUP BY device ORDER BY n DESC`),
-  browserSplit: db.prepare(`SELECT browser, COUNT(*) AS n FROM clicks WHERE link_id = ? GROUP BY browser ORDER BY n DESC LIMIT 8`),
-  recentClicks: db.prepare(`SELECT ts, referrer, device, browser, lang FROM clicks WHERE link_id = ? ORDER BY ts DESC LIMIT 25`),
+  browserSplit: db.prepare(`SELECT browser, COUNT(*) AS n FROM clicks WHERE link_id = ? GROUP BY browser ORDER BY n DESC LIMIT 100`),
+  // Primary language only ("de-DE" and "de-AT" -> "de"); '' = unknown.
+  languageSplit: db.prepare(`
+    SELECT lower(CASE WHEN instr(lang, '-') > 0 THEN substr(lang, 1, instr(lang, '-') - 1) ELSE lang END) AS lang_code, COUNT(*) AS n
+    FROM clicks WHERE link_id = ? GROUP BY lang_code ORDER BY n DESC LIMIT 100
+  `),
+  lastClick: db.prepare(`SELECT ts FROM clicks WHERE link_id = ? ORDER BY id DESC LIMIT 1`),
+  // The COUNTs only walk the covering (link_id, id) index, but still touch one entry per click.
+  recentClicksCount: db.prepare(`SELECT COUNT(*) AS n FROM clicks WHERE link_id = ?`),
+  recentClicksNewerCount: db.prepare(`SELECT COUNT(*) AS n FROM clicks WHERE link_id = ? AND id > ?`),
+  // Keyset pagination instead of LIMIT/OFFSET: id follows click order and, unlike
+  // ts, needs no tie-breaker for same-second rows; the seek stays O(log n) at
+  // any depth. Cursor handling: renderLinkDetail() in server.js.
+  recentClicksFirst: db.prepare(`SELECT id, ts, referrer, device, browser, lang FROM clicks WHERE link_id = ? ORDER BY id DESC LIMIT ?`),
+  recentClicksOlder: db.prepare(`SELECT id, ts, referrer, device, browser, lang FROM clicks WHERE link_id = ? AND id < ? ORDER BY id DESC LIMIT ?`),
+  recentClicksNewer: db.prepare(`SELECT id, ts, referrer, device, browser, lang FROM clicks WHERE link_id = ? AND id > ? ORDER BY id ASC LIMIT ?`),
 };
 
 const ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 // Rejection sampling instead of a plain %: 256 isn't a multiple of
-// ALPHABET.length, so a byte modulo would slightly favor the alphabet's
-// first characters. Bytes at or above MAX_BYTE (the largest multiple of the
-// alphabet length under 256) are discarded and redrawn, so every character
-// is exactly equally likely.
+// ALPHABET.length, so a modulo would favor the first characters.
 const SLUG_MAX_BYTE = 256 - (256 % ALPHABET.length);
 function randomSlug(len = 6) {
   let s = '';
@@ -257,23 +281,18 @@ function createLink({ slug, targetUrl, title, visibility, ownerId, domain, expir
 function bootstrapAdmin({ username, password }) {
   if (stmts.countUsers.get().n > 0) return null;
   const info = stmts.insertUser.run(username, hashPassword(password), 'admin');
-  // assign orphaned links from the single-user version to the first admin
+  // orphaned links from the single-user version go to the first admin
   db.prepare(`UPDATE links SET owner_id = ? WHERE owner_id IS NULL`).run(info.lastInsertRowid);
   return stmts.userById.get(info.lastInsertRowid);
 }
 
 // ---------------------------------------------------------------------------
-// SSO (Authentik/OIDC, see server.js): a person's first successful login
-// without an existing account automatically creates a 'member' account.
-// password_hash is deliberately left as an empty string rather than NULL
-// (the column is NOT NULL) – verifyPassword() correctly returns false for
-// that already (not a valid "salt:hash" pair), so password login is
-// automatically locked out for SSO accounts, with no special-case code
-// needed elsewhere.
+// SSO (Authentik/OIDC, see server.js): a first login without an account
+// creates a 'member'. password_hash is '' (column is NOT NULL); verifyPassword()
+// returns false for it, so password login is locked out for SSO accounts.
 // ---------------------------------------------------------------------------
 function provisionSsoUser({ subject, preferredUsername }) {
-  // Same character set as USERNAME_RE in server.js (not imported here, to
-  // avoid reversing the db.js -> server.js dependency direction).
+  // Same character set as USERNAME_RE in server.js (not imported: avoids a circular dependency).
   const cleaned = String(preferredUsername || '').trim().replace(/[^A-Za-z0-9\-_.]/g, '').slice(0, 28);
   const base = cleaned.length >= 2 ? cleaned : 'nutzer';
   let candidate = base;
@@ -286,9 +305,8 @@ function provisionSsoUser({ subject, preferredUsername }) {
 }
 
 // ---------------------------------------------------------------------------
-// Domains: DOMAINS/BASE_URL only take effect on the very first start as the
-// initial stock (like ADMIN_PASSWORD) – management afterwards happens via
-// /app/domains.
+// Domains: DOMAINS/BASE_URL only seed the first start (like ADMIN_PASSWORD);
+// afterwards managed via /app/domains.
 // ---------------------------------------------------------------------------
 function seedDomainsIfEmpty(origins) {
   if (stmts.listDomains.all().length > 0) return;
@@ -297,4 +315,12 @@ function seedDomainsIfEmpty(origins) {
   }
 }
 
-module.exports = { stmts, createLink, getSessionSecret, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty };
+// Hand the user's links to `recipientId`, detach their change-log entries and
+// delete the account – all or nothing.
+const deleteUserAndReassign = db.transaction((userId, recipientId) => {
+  stmts.reassignLinks.run(recipientId, userId);
+  stmts.clearAuditUser.run(userId);
+  stmts.deleteUser.run(userId);
+});
+
+module.exports = { stmts, deleteUserAndReassign, createLink, getSessionSecret, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty };

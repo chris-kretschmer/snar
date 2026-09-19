@@ -7,46 +7,23 @@
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
 
-/* Swiss / International Typographic Style: Raster, Typografie als
-   Hierarchie-Mittel statt Dekoration, dünne Linien statt Schatten, keine
-   Rundungen, Farbe nur sparsam (Akzent-Blau bleibt, sonst Schwarz/Weiß/Grau).
-   --radius* bleiben als Tokens bestehen (0), damit keine der ~40
-   Verwendungsstellen einzeln angefasst werden muss – ein Wertwechsel hier
-   würde bei Bedarf wieder Rundungen zurückbringen. --shadow ist bewusst
-   "none": flache Flächen (Karten, Tabellenzeilen) bekommen ihre Kontur über
-   den ohnehin vorhandenen border, keinen zusätzlichen Weichzeichner.
-   --shadow-hover bleibt als einzige, stark reduzierte Schatten-Variante für
-   tatsächlich schwebende Ebenen (Popover, Dialog, mobile Sidebar) – ohne
-   jeden Tiefenhinweis wäre dort nicht mehr erkennbar, dass sie über dem
-   Seiteninhalt liegen. */
+/* Swiss-Stil: Raster, Typografie statt Dekoration, dünne Linien statt Schatten, keine Rundungen.
+   --radius* und --shadow sind bewusst 0/none (Tokens bleiben); --shadow-hover nur für schwebende Ebenen (Popover, Dialog, mobile Sidebar). */
 :root {
   --bg: #f7f8fa;
   --surface: #ffffff;
   --ink: #0e1220;
-  --label: #3c4354;
   --muted: #5a6172;
-  /* #6b7280 statt des ursprünglichen #8a90a0 – Letzteres lag bei nur 3,19:1
-     Kontrast auf Weiß, unter dem WCAG-AA-Minimum (4,5:1) für Normaltext, wurde
-     aber an vielen Stellen genau dafür verwendet (Tabellenköpfe, h3-Labels,
-     "← Zurück" etc.). Dieser Wert bleibt aus der Kontrast-Fixrunde
-     unverändert: ~4,83:1 auf Weiß, ~4,55:1 auf --bg. */
+  /* #6b7280 statt #8a90a0 (3,19:1): WCAG AA verlangt 4,5:1 für Normaltext; hier ~4,83:1 auf Weiß, ~4,55:1 auf --bg. */
   --muted2: #6b7280;
-  /* Bleibt bewusst niedrigkontrastig (2,3:1) – nur noch für Fälle, die WCAG
-     1.4.3 explizit ausnimmt (deaktivierte Controls) oder die rein dekorativ/
-     untergeordnet sind (ausgegraute Kalendertage außerhalb des Monats). Echte
-     Textstellen, die vorher --muted3 nutzten, laufen über --muted2. */
+  /* Bewusst niedrigkontrastig (2,3:1): nur für deaktivierte Controls und rein dekorative Elemente (WCAG 1.4.3 nimmt beides aus). */
   --muted3: #a6abb8;
   --line: #0e1220;
   --line2: #d9dbe0;
   --accent: #2140c8;
-  --accent-hover: #1a339f;
-  --accent-ink: #ffffff;
   --accent-soft: #eef1fc;
-  --accent-soft-border: #2140c8;
-  --accent-focus: #dfe5fa;
+  --accent-dark: #16307e;
   --danger: #b3261e;
-  --danger-border: #b3261e;
-  --danger-soft-border: #b3261e;
   --danger-soft: #fbecec;
   --success: #1a7a42;
   --success-soft: #e7f4ec;
@@ -55,6 +32,9 @@
   --radius-xs: 0px;
   --shadow: none;
   --shadow-hover: 0 2px 10px rgba(14, 18, 32, .14);
+  --scrim: rgba(14, 18, 32, .5);
+  --hairline: rgba(0, 0, 0, .1);
+  --on-ink-muted: #c7cad4;
   --sans: 'Open Sans', system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 }
 
@@ -63,18 +43,14 @@ html {
   -webkit-text-size-adjust: 100%; color-scheme: light;
   -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
 }
-/* App ist bewusst nur hell – ohne dieses "manipulation" hätte jedes Tap-Ziel
-   auf Touch-Geräten eine Doppeltipp-Zoom-Verzögerung, und der graue
-   Standard-Tap-Flash würde die eigenen Hover-/Focus-States überdecken. */
+/* manipulation: kein Doppeltipp-Zoom-Delay; kein grauer Tap-Flash, der Hover-/Focus-States überdeckt. */
 a, button, .btn, input, select, textarea { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 .skip-link {
-  /* -40px lag knapp unter der tatsächlichen Höhe (~41px) – dadurch ragte
-     dauerhaft ein 1px-Streifen oben ins Bild statt komplett unsichtbar zu
-     sein, bis der Link per Tab fokussiert wird. -100px lässt genug Puffer. */
+  /* -100px statt -40px: Höhe ~41px, sonst ragt ein 1px-Streifen ins Bild. */
   position: absolute; top: -100px; left: 8px; z-index: 100;
   background: var(--ink); color: var(--surface);
   padding: 10px 16px; border-radius: var(--radius-sm);
@@ -86,15 +62,14 @@ body {
   font: 16px/1.55 var(--sans);
 }
 main { padding: 36px 32px 56px; }
-/* Vertikaler Seiten-Stapel: einheitlicher 22px-Abstand zwischen Überschrift,
-   Karten und Sektionen (Karten selbst haben kein Außenmargin). */
+/* Einheitlicher 22px-Abstand zwischen Überschrift, Karten und Sektionen (Karten ohne Außenmargin). */
 .page { display: flex; flex-direction: column; gap: 22px; }
 
 /* Sidebar */
-.shell { display: flex; min-height: 100vh; }
+.shell { display: flex; min-height: 100vh; min-height: 100dvh; }
 .shell-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .sidebar {
-  flex: none; width: 280px; position: sticky; top: 0; height: 100vh; overflow-y: auto; overflow-x: hidden;
+  flex: none; width: 280px; position: sticky; top: 0; height: 100vh; height: 100dvh; overflow-y: auto; overflow-x: hidden;
   overscroll-behavior: contain;
   background: var(--surface); border-right: 1px solid var(--line);
   display: flex; flex-direction: column; gap: 4px; padding: 14px 14px 20px;
@@ -121,16 +96,8 @@ main { padding: 36px 32px 56px; }
 }
 .account-trigger:hover { background: var(--bg); }
 .chevron-icon { width: 14px; height: 14px; flex: none; margin-left: auto; color: var(--muted2); }
-/* Shared popover base (account menu, custom-select menu, datetime panel
-   below): display:none→block, participating in the fade via allow-discrete
-   so a closed popover keeps taking zero layout/scroll space – a plain
-   opacity/visibility fade would still occupy its full box while closed,
-   which can cause page overflow depending on where the trigger sits.
-   Positioning/z-index/padding and any extra per-popover rules (max-height,
-   width, .align-right, …) stay with each one below; only what's genuinely
-   identical across all three lives here. border ist hier bewusst dunkler/
-   dicker als das sonstige --line-Grau (kräftige Kontur statt Schatten als
-   Haupt-Tiefenhinweis, siehe --shadow-hover-Kommentar oben). */
+/* Popover-Basis (Account-Menü, Custom-Select, Datetime-Panel): display:none→block per allow-discrete, damit ein
+   geschlossenes Popover keinen Layout-/Scroll-Platz belegt. Border bewusst dunkel und dick statt Schatten. */
 .account-menu, .custom-select-menu, .custom-datetime-panel {
   display: none; position: absolute; z-index: 20;
   background: var(--surface); border: 1px solid var(--ink); border-radius: var(--radius-sm);
@@ -168,8 +135,6 @@ main { padding: 36px 32px 56px; }
   color: var(--muted2); white-space: nowrap; overflow: hidden;
 }
 .sidenav .group-title:first-child { margin-top: 0; }
-/* Aktiv-Zustand über eine kräftige linke Linie statt Flächenfüllung – Swiss-
-   typischer, spart die einzige Verwendung von --accent-soft im Nav weg. */
 .navlink {
   display: flex; align-items: center; gap: 10px;
   color: var(--muted); text-decoration: none; white-space: nowrap;
@@ -185,46 +150,41 @@ main { padding: 36px 32px 56px; }
 .inline { display: inline; margin: 0; width: 100%; }
 
 /* Karten & Layout */
-/* Kein Außenmargin: Abstände zwischen Karten steuern die Seiten-Layouts
-   über ihre Flex-Gaps (22px), sonst addieren sich Margin und Gap. Kontur
-   kommt allein vom border – --shadow ist "none", siehe Kommentar oben. */
+/* Kein Außenmargin: Abstände steuern die Flex-Gaps der Seiten-Layouts, sonst addieren sich Margin und Gap. */
 .card {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 24px; box-shadow: var(--shadow);
 }
 .card.danger { border-color: var(--danger); box-shadow: none; }
-/* minmax(0, 1fr): see the comment at .detail-grid – same shrink trap. */
-.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .hero { margin: 0; display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
 h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.03em; margin: 0; text-wrap: balance; }
-/* 17px, deutlich fetter als der 13,5px-Fließtext daneben – Abschnitts-
-   Überschriften tragen die Hierarchie in diesem Stil allein über Typografie
-   (kein Kartenrahmen-Kontrast mehr nötig, um sie abzusetzen). */
 h2 { font-size: 17px; font-weight: 700; color: var(--ink); margin: 0 0 12px; text-transform: none; letter-spacing: -0.01em; text-wrap: balance; }
 h3 { font-size: 11px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .1em; margin: 0; }
 .muted { color: var(--muted2); }
+.hint { font-size: 12.5px; }
+.prose { line-height: 1.55; }
+.flush { margin: 0; }
+.mt-15 { margin-top: 15px; }
+.mb-20 { margin-bottom: 20px; }
+.flex-col { display: flex; flex-direction: column; gap: 20px; }
+.flex-col.gap-16 { gap: 16px; }
+.flex-col.gap-6 { gap: 6px; }
+.card.card-narrow { max-width: 400px; }
 
-/* Formulare: Unterstrich statt umschlossener Box – Eingabefelder lesen sich
-   als Teil des Rasters, nicht als eigene "Container"-Elemente. */
+/* Formulare: Unterstrich statt umschlossener Box */
 label { display: block; font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 7px; }
 input, select, textarea {
   width: 100%; padding: 0 0 8px; font: inherit; font-size: 14px; color: var(--ink);
   background: transparent; border: none; border-bottom: 2px solid var(--line2); border-radius: 0;
 }
-/* Inline-Feld-Fehler (siehe dashboard()/linkDetail()/usersPage()/
-   domainsPage() in views.js) – sitzt direkt unter dem betroffenen Feld
-   statt nur als generisches Seiten-Banner. */
 .field-error { display: block; margin-top: 6px; font-size: 12.5px; color: var(--danger); }
 input.invalid, textarea.invalid { border-bottom-color: var(--danger); }
-input.invalid:focus-visible { box-shadow: 0 2px 0 0 var(--danger); }
-/* Chrome/Edge erzwingen bei Autofill/Autocomplete eine eigene (blaue)
-   Hintergrundfarbe, die sich per background-color nicht überschreiben lässt –
-   nur der klassische box-shadow-inset-Trick gewinnt zuverlässig dagegen. */
+input.invalid:focus-visible { box-shadow: inset 0 -2px 0 0 var(--danger); }
+/* Chrome/Edge erzwingen beim Autofill eine eigene Hintergrundfarbe; nur der box-shadow-inset-Trick gewinnt zuverlässig. */
 input:-webkit-autofill, input:-webkit-autofill:hover,
 input:-webkit-autofill:focus, input:-webkit-autofill:active {
-  -webkit-box-shadow: 0 0 0 1000px #fff inset;
-  box-shadow: 0 0 0 1000px #fff inset;
+  -webkit-box-shadow: 0 0 0 1000px var(--surface) inset;
+  box-shadow: 0 0 0 1000px var(--surface) inset;
   -webkit-text-fill-color: var(--ink);
   caret-color: var(--ink);
   transition: background-color 5000s ease-in-out 0s;
@@ -236,9 +196,7 @@ select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%230e1220'%3E%3Cpath d='M11.625 14.913q-.175-.063-.325-.213l-4.6-4.6q-.275-.275-.275-.7t.275-.7t.7-.275t.7.275l3.9 3.9l3.9-3.9q.275-.275.7-.275t.7.275t.275.7t-.275.7l-4.6 4.6q-.15.15-.325.213t-.375.062t-.375-.062'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 2px center; background-size: 14px 14px;
 }
-/* Eigenes Dropdown-Menü (JS-Progressive-Enhancement über echtem <select>,
-   siehe app.js) – native Options-Listen lassen sich nicht browserübergreifend
-   im App-Design stylen. */
+/* Eigenes Dropdown (JS über echtem <select>): native Options-Listen lassen sich nicht browserübergreifend stylen. */
 .custom-select { position: relative; }
 .custom-select select { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .custom-select-trigger {
@@ -248,14 +206,11 @@ select {
   border-radius: 0; color: var(--ink);
 }
 .custom-select-trigger:hover { background: transparent; border-bottom-color: var(--ink); color: var(--ink); }
-/* Ohne das läuft ein langer, unbrechbarer Wert (Domain, Nutzername beim
-   "Links übertragen an"-Dropdown) über den Rahmen des Feldes hinaus, statt
-   sauber abgeschnitten zu werden – gleiches Muster wie .dt-label unten. */
+/* Sonst läuft ein langer, unbrechbarer Wert über den Feldrahmen hinaus. */
 .custom-select-trigger .select-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .custom-select-trigger .chevron-icon { width: 14px; height: 14px; margin-left: auto; color: var(--muted); flex: none; transform: translateY(1px); }
-/* Gleiches Prinzip wie bei input:focus-visible oben – kein Rahmen um den
-   Trigger, nur die verstärkte Unterlinie. */
-.custom-select-trigger:focus-visible { border-bottom-color: var(--accent); outline: none; box-shadow: 0 2px 0 0 var(--accent); }
+/* Kein Rahmen um den Trigger, nur verstärkte Unterlinie (wie input:focus-visible). */
+.custom-select-trigger:focus-visible { border-bottom-color: var(--accent); outline: none; box-shadow: inset 0 -2px 0 0 var(--accent); }
 .custom-select-menu {
   left: 0; right: 0; top: calc(100% + 4px); padding: 6px;
   max-height: 240px; overflow-y: auto; overscroll-behavior: contain;
@@ -267,33 +222,23 @@ select {
 .custom-select-option:hover { background: var(--bg); }
 .custom-select-option.active { color: var(--surface); font-weight: 700; background: var(--ink); }
 
-/* Eigener Datum/Uhrzeit-Picker (siehe app.js), analog zum Custom-Dropdown
-   oben – native datetime-local-Popups lassen sich nicht im App-Design stylen. */
+/* Eigener Datum/Uhrzeit-Picker: native datetime-local-Popups lassen sich nicht stylen. */
 .custom-datetime { position: relative; }
 .custom-datetime input[type="datetime-local"] { position: absolute; inset: 0; opacity: 0; pointer-events: none; }
 .custom-datetime-trigger { gap: 9px; }
 .custom-datetime-trigger .dt-icon { width: 15px; height: 15px; flex: none; color: var(--muted); }
 .custom-datetime-trigger .dt-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .custom-datetime-trigger.dt-empty .dt-label { color: var(--muted2); }
-/* Gleiches Prinzip wie bei input:focus-visible oben – kein Rahmen um den
-   Trigger, nur die verstärkte Unterlinie. */
-.custom-datetime-trigger:focus-visible { border-bottom-color: var(--accent); outline: none; box-shadow: 0 2px 0 0 var(--accent); }
-/* Gleiches Prinzip wie .account-menu oben. Wichtig hier zusätzlich: die
-   align-right-Messung in app.js liest getBoundingClientRect() direkt nach
-   dem Setzen von .open – mit allow-discrete schaltet display synchron im
-   selben Skriptdurchlauf um (wie zuvor bei display:none/block), das
-   funktioniert also unverändert weiter. */
+/* Die align-right-Messung in app.js liest getBoundingClientRect() direkt nach dem Setzen von .open;
+   allow-discrete schaltet display synchron um, das funktioniert also. */
 .custom-datetime-panel {
   left: 0; top: calc(100% + 4px); width: 268px; max-width: calc(100vw - 16px);
   padding: 14px; overscroll-behavior: contain;
 }
-/* Wird per JS gesetzt, wenn das Panel rechts aus dem Viewport ragen würde
-   (z. B. schmales Feld am rechten Rand). */
+/* Per JS gesetzt, wenn das Panel rechts aus dem Viewport ragen würde. */
 .custom-datetime-panel.align-right { left: auto; right: 0; }
 .dt-cal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-/* Sichtbar bleibt die 26px-Optik aus dem knappen Kalenderkopf, das
-   unsichtbare ::before hebt die Klickfläche auf ~40px an (Platz genug
-   zwischen den Pfeilen und dem Monatstitel dazwischen, siehe .dt-cal-header). */
+/* Sichtbar 26px, das ::before hebt die Klickfläche auf ~40px an. */
 .dt-cal-header .pagination-arrow { width: 26px; height: 26px; position: relative; }
 .dt-cal-header .pagination-arrow::before { content: ''; position: absolute; inset: -7px; }
 .dt-cal-title { font-size: 12px; font-weight: 700; color: var(--ink); text-transform: uppercase; letter-spacing: .04em; }
@@ -321,22 +266,17 @@ select {
 .dt-time-sep { color: var(--muted2); font-weight: 700; }
 .dt-panel-footer { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 14px; }
 .dt-panel-footer .btn { padding: 7px 14px; font-size: 11.5px; }
-/* Kein umlaufendes outline auf den Unterstrich-Feldern – wirkt dort wie ein
-   ungewollter Rahmen um ein Element, das bewusst keine Box sein soll. Als
-   Fokus-Signal reicht die Farbänderung der Linie selbst; box-shadow
-   verdoppelt sie zu einem kräftigeren 4px-Band darunter (kein Layout-Shift,
-   da box-shadow keinen Platz beansprucht) – Farbe allein wäre ein
-   schwächerer, rein farbbasierter Hinweis. */
+/* Kein umlaufendes outline auf Unterstrich-Feldern; ein innerer Schatten verdoppelt die Linie zu einem durchgehenden Band ohne
+   Layout-Shift und ohne Lücke bei gebrochenen Zoomstufen (Farbe allein wäre ein zu schwacher Hinweis). */
 input:focus-visible, select:focus-visible, textarea:focus-visible {
   border-bottom-color: var(--accent); outline: none;
-  box-shadow: 0 2px 0 0 var(--accent);
+  box-shadow: inset 0 -2px 0 0 var(--accent);
 }
 textarea:focus-visible { border-color: var(--accent); }
 button:focus-visible, a:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 1px;
 }
-/* Primärer Button: Vollton-Fläche, Versalien + Sperrung statt Softness –
-   die eine bewusst "laute" Stelle im sonst zurückhaltenden Farbeinsatz. */
+/* Primärer Button: Vollton-Fläche, Versalien + Sperrung. */
 button, .btn {
   font: inherit; font-size: 12.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
   cursor: pointer; text-decoration: none; display: inline-block;
@@ -344,46 +284,38 @@ button, .btn {
   border: 1px solid var(--ink); border-radius: var(--radius-sm); padding: 10px 20px;
 }
 button:hover, .btn:hover { background: var(--accent); border-color: var(--accent); }
-/* Taktiles Press-Feedback für alle Buttons (nicht nur .btn-create, siehe
-   unten) – bewusst nur ein dezenter 1px-Versatz statt Skalierung. */
+/* Press-Feedback für alle Buttons: dezenter 1px-Versatz statt Skalierung. */
 button:active, .btn:active { transform: translateY(1px); }
 button.ghost, .btn.ghost {
   background: transparent; color: var(--ink); font-weight: 700; border-color: var(--line);
 }
 button.ghost:hover, .btn.ghost:hover { border-color: var(--accent); color: var(--accent); background: transparent; }
 button.destructive-ghost, .btn.destructive-ghost {
-  background: transparent; color: var(--danger); font-weight: 700; border-color: var(--danger-border);
+  background: transparent; color: var(--danger); font-weight: 700; border-color: var(--danger);
 }
-button.destructive-ghost:hover, .btn.destructive-ghost:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+button.destructive-ghost:hover, .btn.destructive-ghost:hover { background: var(--danger); color: var(--surface); border-color: var(--danger); }
 button:disabled, button:disabled:hover {
   cursor: not-allowed; background: transparent; color: var(--muted3); border-color: var(--line2);
 }
-/* Domain-Erreichbarkeits-Check (Domainverwaltung, "Testen"-Button in
-   .row-actions, siehe domainTableRow() in views.js) – der Button selbst wird
-   nach dem Klick zum Ergebnis (Label + Farbe), bleibt aber klickbar für einen
-   erneuten Check, siehe app.js. */
+/* Domain-Erreichbarkeits-Check: der Button wird nach dem Klick zum Ergebnis, bleibt aber für einen erneuten Check klickbar. */
 .reach-test-btn.ok { color: var(--success); border-color: var(--success); background: transparent; }
 .reach-test-btn.ok:hover { color: var(--success); border-color: var(--success); background: var(--success-soft); }
-.reach-test-btn.fail { color: var(--danger); border-color: var(--danger-border); background: transparent; }
-.reach-test-btn.fail:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+.reach-test-btn.fail { color: var(--danger); border-color: var(--danger); background: transparent; }
+.reach-test-btn.fail:hover { background: var(--danger); color: var(--surface); border-color: var(--danger); }
 .stack > * + * { margin-top: 12px; }
 .grid-form { display: flex; flex-wrap: wrap; gap: 20px; align-items: end; }
 .grid-form .field { flex: 1 1 180px; }
+/* block: ein Inline-Input bekommt ~3px Descender-Platz und wäre höher als die Custom-Select/-Datetime-Felder. */
+.grid-form .field > input { display: block; }
 .grid-form .field.grow { flex: 3 1 300px; }
 .grid-form .field.submit { flex: 0 0 auto; }
 .radio-row { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
-.radio-row.divided { border-top: 1px solid var(--ink); padding-top: 20px; margin-top: 2px; }
-.radio-row .label-inline { font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; margin: 0; }
-/* text-transform/letter-spacing zurücksetzen: das sind Options-Texte neben
-   Radios ("Persönlich"/"Organisation"), keine Formularfeld-Labels – ohne
-   den Reset erben sie sonst die Versalien/Sperrung vom Basis-label-Stil
-   oben, der genau dafür gedacht ist. */
+.label-inline { font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; }
+/* Options-Texte neben Radios, keine Feld-Labels: Versalien/Sperrung des Basis-label-Stils zurücksetzen. */
 .radio-row label { display: flex; align-items: center; gap: 10px; font-size: 13.5px; font-weight: 400; color: var(--muted); margin: 0; text-transform: none; letter-spacing: normal; }
 .radio-row input[type=radio] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
 
 .create-actions { display: flex; align-items: center; gap: 14px; margin-left: auto; }
-/* Kein separater Verlauf/Innenschatten mehr – derselbe Vollton-Look wie
-   jeder andere primäre Button, nur in der etwas größeren "Erstellen"-Höhe. */
 .btn-create {
   display: inline-flex; align-items: center; gap: 9px; height: 44px; padding: 0 24px;
   border: 1px solid var(--ink); border-radius: 0; font-size: 13px; font-weight: 700;
@@ -396,16 +328,15 @@ button:disabled, button:disabled:hover {
   background: transparent; color: var(--muted3); border-color: var(--line2); cursor: not-allowed; transform: none;
 }
 
-/* Badges: umrandete Tags statt gefüllter Pillen – Farbe steckt in Kontur +
-   Text, nicht in einer Flächenfüllung. */
+/* Badges: umrandete Tags statt gefüllter Pillen */
 .badge {
   display: inline-block; vertical-align: 2px; margin-left: 6px;
   font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
   color: var(--accent); background: transparent; border: 1px solid var(--accent); border-radius: 0; padding: 1px 8px;
 }
-.badge.muted { color: var(--muted); background: transparent; border-color: var(--line2); }
-.badge.expired { color: var(--danger); background: transparent; border-color: var(--danger); }
-.badge.active { color: var(--success); background: transparent; border-color: var(--success); }
+.badge.muted { color: var(--muted); border-color: var(--line2); }
+.badge.expired { color: var(--danger); border-color: var(--danger); }
+.badge.active { color: var(--success); border-color: var(--success); }
 
 .empty {
   border: 1px dashed var(--line); border-radius: var(--radius);
@@ -418,59 +349,103 @@ button:disabled, button:disabled:hover {
 .crumbs a:hover { color: var(--accent); }
 .detail-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .detail-head h1 .accent { color: var(--accent); }
-/* Flex-Kind ohne min-width:0 behält seine Inhaltsbreite (siehe die
-   min-width:auto-Kommentare weiter unten) – bei einem langen, unbrechbaren
-   Domain+Slug (bis 64 Zeichen, kein Leerzeichen) sprengt das sonst die
-   ganze Zeile samt Seite auf schmalen Screens. overflow-wrap erlaubt den
-   Umbruch mangels natürlicher Wortgrenze. */
+/* min-width:0, sonst sprengt ein langer unbrechbarer Domain+Slug (bis 64 Zeichen) auf schmalen Screens die Seite (min-width:auto-Falle). */
 .detail-head h1 { min-width: 0; overflow-wrap: break-word; }
-/* minmax(0, 1fr) instead of 1fr: a bare 1fr grid track keeps its default
-   min-width:auto, so wide nested content (e.g. the 3-column stat breakdown
-   further down) forces the track past the available space instead of
-   shrinking – overflows the page specifically in the tablet range, where
-   the sidebar is back but there isn't much room left (fine at both mobile,
-   where the sidebar is hidden, and desktop, where there's enough space
-   either way). */
+.detail-head .head-action { margin-left: auto; padding: 9px 36px; }
+/* minmax(0, 1fr) instead of 1fr: a bare 1fr track keeps min-width:auto, so wide content overflows it, notably
+   in the tablet range (sidebar visible, little room). */
 .detail-grid { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 22px; }
+/* Gleiche Innenabstände wie .qrbox (18px); das Formular füllt die Karte, damit die Sichtbarkeit-Zeile auf Höhe der SVG/PNG-Buttons sitzt. */
+.detail-grid > .card { display: flex; flex-direction: column; padding-block: 18px; }
+/* Oben 24px wie die übrigen Karten (+ 40px .card-head), damit "Link-Details" auf einer Höhe mit deren Überschriften sitzt. */
+.detail-grid > .card.edit-card { padding-top: 24px; }
+.detail-grid > .card > form { flex: 1; }
+/* 7px wie das Padding der Tabellenköpfe/Listenüberschriften: gleicher Abstand Überschrift → erster Text in allen Karten. */
+#edit-form { margin-top: 7px; }
+#edit-form > .radio-row { margin-top: auto; min-height: 40px; }
 .qrbox {
   margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-  padding: 18px; text-align: center; align-self: start; box-shadow: var(--shadow);
+  padding: 18px; text-align: center; box-shadow: var(--shadow);
   display: flex; flex-direction: column; gap: 12px;
 }
-/* Dezenter Rand: QR-Bild sitzt sonst randlos auf der ebenfalls weißen
-   .qrbox-Karte, ohne optischen Abschluss zum Kartenhintergrund. */
-.qrbox img { display: block; width: 100%; height: auto; outline: 1px solid rgba(0, 0, 0, .1); outline-offset: -1px; }
-.qrbox .dl { display: flex; gap: 8px; }
+/* SVG/PNG ganz unten, auf einer Linie mit der Sichtbarkeit-Zeile. */
+/* Tablet: Sidebar da, für 220px QR-Spalte + Formular reicht der Platz nicht; untereinander, QR-Box begrenzt. */
+@media (width > 760px) and (width <= 1040px) {
+  .detail-grid { grid-template-columns: minmax(0, 1fr); }
+  .qrbox { max-width: 260px; }
+}
+/* Dezenter Rand: das QR-Bild sitzt sonst randlos auf der ebenfalls weißen .qrbox. */
+.qrbox img, .qrbox svg { display: block; width: 100%; height: auto; outline: 1px solid var(--hairline); outline-offset: -1px; }
+.qrbox .dl { display: flex; gap: 8px; margin-top: auto; }
 .qrbox .dl .btn { flex: 1; text-align: center; padding: 8px 0; }
-/* Statistik-Kopf: Titel + Kennzahlen links, Zeitraum-Chips rechts */
+/* Statistik-Kopf: Titel links, Zeitraum-Chips rechts */
 .stat-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-.stat-row { display: flex; align-items: baseline; gap: 24px; row-gap: 6px; flex-wrap: wrap; }
-.stat-row .num { white-space: nowrap; }
-.stat-row .num b { font-size: 24px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+/* Custom range: natives <details>/<summary> statt permanentem Chip + offenem Formular, funktioniert ohne JS. */
+/* Panel anchored to the whole chip row, not the "Zeitraum" chip: after wrapping that chip can sit far left and
+   a right-aligned panel would hang off-screen. */
+.stat-header .range-group { position: relative; }
+.range-custom-details { position: static; }
+.range-custom-details summary.range-custom-trigger {
+  display: flex; align-items: center; justify-content: center; list-style: none;
+}
+.range-custom-details summary.range-custom-trigger::-webkit-details-marker { display: none; }
+.range-custom-details summary.range-custom-trigger::marker { content: ''; }
+.custom-range-panel {
+  position: absolute; top: calc(100% + 8px); right: 0; z-index: 20;
+  /* Never wider than the chip row, so it can't overflow either screen edge. */
+  max-width: 100%; box-sizing: border-box;
+  background: var(--surface); border: 1px solid var(--ink); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-hover); padding: 16px;
+}
+/* flex-wrap, not a fixed breakpoint: fields share a row when they fit, else stack full-width. */
+.custom-range-form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+.custom-range-form .field { flex: 1 1 150px; margin-bottom: 0; }
+.custom-range-form .btn { height: 40px; }
+/* Rendered only with an active custom range: a plain link to the unfiltered URL so ?from&to leaves the
+   address bar too. 40px like the chip row's hit-area. */
+.range-clear-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; margin-left: 4px; font-size: 18px; line-height: 1;
+  color: var(--muted2); text-decoration: none; flex: none;
+}
+.range-clear-btn:hover { color: var(--danger); }
+.range-clear-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .num-cell { font-variant-numeric: tabular-nums; }
-.stat-row .num span { font-size: 11px; color: var(--muted2); text-transform: uppercase; letter-spacing: .06em; }
-/* Chip-Buttons (Zeitraum- und Seitengröße-Auswahl teilen sich dieses
-   Grundmuster, siehe .page-size-group/.page-size-btn weiter unten). */
-/* flex-wrap: the chips themselves don't shrink (fixed min-width per
-   button), so without wrapping they force their row wider than the
-   available column – wrap avoids that in narrow columns (e.g. the tablet
-   width range, see .detail-grid). */
-/* Segmented control: shared "pill group" skin behind .range-btn/.page-size-btn
-   (stats period/page size), .tab-link (Admin-Einstellungen, real <a> nav
-   between two routes) and .qr-type-tabs span (static QR type, CSS-only radio
-   trick, see further below) – three independent implementations of the same
-   look used to each carry the full declaration list; consolidated here so a
-   future style tweak (e.g. the pill height) only needs to change once. Kein
-   Flächen-Hintergrund mehr fürs Segment selbst – aktiv wird über eine
-   Unterlinie markiert, ruhiger als die vorherige gefüllte Pille. */
+/* "Auf einen Blick": Karte ohne Kachelrahmen, dünne Linien trennen die Werte; 6 pro Reihe ab 1200px, 3 ab 1041px,
+   sonst 2. Lange Werte dürfen umbrechen. */
+.kpi-card { padding: 10px 24px; }
+.stat-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.stat-kpi { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.stat-kpi b { font-size: 24px; line-height: 1.15; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.stat-kpi span { font-size: 11px; color: var(--muted2); text-transform: uppercase; letter-spacing: .06em; }
+/* Trennlinien je Spaltenzahl; :nth-child(n) setzt zuerst zurück (gleiche Spezifität), damit der vorige Breakpoint nicht durchschlägt. */
+.stat-kpi:nth-child(n) { padding: 12px 20px; border: 0; }
+.stat-kpi:nth-child(odd) { padding-left: 0; }
+.stat-kpi:nth-child(even) { padding-right: 0; border-left: 1px solid var(--line); }
+.stat-kpi:nth-child(n+3) { border-top: 1px solid var(--line); }
+@media (width > 1040px) {
+  .stat-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stat-kpi:nth-child(n) { padding: 12px 20px; border: 0; }
+  .stat-kpi:nth-child(3n+1) { padding-left: 0; }
+  .stat-kpi:nth-child(3n) { padding-right: 0; }
+  .stat-kpi:nth-child(3n+2), .stat-kpi:nth-child(3n) { border-left: 1px solid var(--line); }
+  .stat-kpi:nth-child(n+4) { border-top: 1px solid var(--line); }
+}
+@media (min-width: 1200px) {
+  .stat-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .stat-kpi:nth-child(n) { padding: 12px 20px; border: 0; }
+  .stat-kpi:nth-child(1) { padding-left: 0; }
+  .stat-kpi:nth-child(6) { padding-right: 0; }
+  .stat-kpi:nth-child(n+2) { border-left: 1px solid var(--line); }
+}
+/* Segmented control: shared skin for .range-btn/.page-size-btn, .tab-link and .qr-type-tabs span; active = underline.
+   flex-wrap because the chips don't shrink and would widen narrow columns (tablet range). */
 .range-group, .page-size-group, .tab-group, .qr-type-tabs {
   display: flex; flex-wrap: wrap; align-items: center; gap: 0;
   background: transparent; border-bottom: 1px solid var(--line2); border-radius: 0; padding: 0;
 }
 .tab-group, .qr-type-tabs { width: fit-content; }
-/* 40px, nicht weniger: Mindest-Klickfläche aus einer früheren Runde (siehe
-   make-interfaces-feel-better-Check), beim Redesign fast versehentlich auf
-   38px gerutscht. */
+/* 40px Mindest-Klickfläche (Touch-Target). */
 .range-btn, .page-size-btn, .tab-link, .qr-type-tabs span {
   height: 40px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
   color: var(--muted2); border-radius: 0;
@@ -478,7 +453,7 @@ button:disabled, button:disabled:hover {
 }
 .tab-link:focus-visible, .qr-type-tabs label:focus-within span { outline: 2px solid var(--accent); outline-offset: 1px; }
 .range-btn.active, .range-btn.active:hover, .page-size-btn.active, .page-size-btn.active:hover,
-.tab-link.active, .tab-link.active:hover, .qr-type-tabs label:has(input:checked) span {
+.tab-link.active, .tab-link.active:hover, .qr-type-tabs input:checked + span {
   background: transparent; color: var(--ink); font-weight: 700; box-shadow: none; border-bottom-color: var(--accent);
 }
 
@@ -487,116 +462,192 @@ button:disabled, button:disabled:hover {
   padding: 0 12px; text-align: center;
 }
 .range-btn { min-width: 52px; }
+.page-size-btn { min-width: 40px; padding: 0 11px; }
 .range-btn:hover, .page-size-btn:hover { background: transparent; color: var(--ink); }
-.range-btn.active, .page-size-btn.active { border-bottom-color: var(--accent); }
 
-/* Seiten-Tabs (z. B. Admin-Einstellungen: Zugangs-/Domainverwaltung) – echte
-   <a>-Navigation zwischen zwei Server-Routen statt Client-Toggle (siehe
-   adminTabs() in views.js). */
+/* Seiten-Tabs: echte <a>-Navigation zwischen Server-Routen statt Client-Toggle. */
 .tab-link { display: inline-flex; align-items: center; padding: 0 14px; text-decoration: none; }
 .tab-link:hover { color: var(--ink); }
 
 /* Klicks-Liniendiagramm (Statistik-Bereich der Detailseite) */
-.chart-wrap { position: relative; margin-top: 18px; }
-.chart-svg { display: block; width: 100%; height: 190px; }
+.chart-wrap, .chart-x-labels { --axis-w: 36px; }
+.chart-wrap { position: relative; margin-top: 10px; padding-left: var(--axis-w); }
+.chart-wrap:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.chart-svg { display: block; width: 100%; height: 190px; } /* ab 1480px höher (unten), sonst wirkt der Plot (bis 10:1) flach */
 .chart-grid { stroke: var(--line2); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .chart-grid-base { stroke: var(--ink); }
 .chart-area { fill: color-mix(in srgb, var(--accent), transparent 92%); }
 .chart-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.chart-line-partial { stroke-dasharray: 5 4; }
 .chart-hover { cursor: default; }
 .chart-hover-point {
   position: absolute; z-index: 4; width: 8px; height: 8px; border-radius: 50%;
   background: var(--surface); border: 2px solid var(--accent); box-sizing: border-box;
   transform: translate(-50%, -50%); pointer-events: none;
-  opacity: 0; transition: opacity .1s ease;
+  opacity: 0;
 }
 .chart-hover-point.visible { opacity: 1; }
+/* Y-Achse links in der Padding-Spalte, mittig auf der Gitterlinie. */
 .chart-label {
-  position: absolute; left: 8px; font-size: 10.5px; font-weight: 700; color: var(--muted2);
-  background: rgba(255, 255, 255, .85); padding: 0 3px;
+  position: absolute; left: 0; width: calc(var(--axis-w) - 8px); text-align: left;
+  transform: translateY(-50%); font-size: 10.5px; font-weight: 700; line-height: 1;
+  color: var(--muted2); font-variant-numeric: tabular-nums;
 }
-/* Absolut positioniert statt Flex-space-between: jedes Label sitzt an der
-   Prozent-Position seines echten Datenpunkt-Index (siehe xLabelsHtml() in
-   views.js), damit es exakt unter dem zugehörigen Kurvenpunkt steht. */
-.chart-x-labels { position: relative; height: 14px; margin-top: 4px; }
+/* Absolut positioniert statt space-between: jedes Label steht an der Prozentposition seines Datenpunkts. */
+.chart-x-labels { position: relative; height: 14px; margin-top: 4px; margin-left: var(--axis-w); }
 .chart-x-labels span { position: absolute; top: 0; transform: translateX(-50%); font-size: 10.5px; color: var(--muted2); white-space: nowrap; }
 
-/* Chart-Tooltip: folgt der Punktposition (siehe app.js showTooltip) */
+/* Chart-Tooltip */
 .chart-tooltip {
   position: absolute; z-index: 5; pointer-events: none;
   background: var(--ink); border: none; border-radius: var(--radius-xs);
   box-shadow: var(--shadow-hover); padding: 8px 10px; white-space: nowrap;
   transform: translate(-50%, calc(-100% - 10px));
-  opacity: 0; transition: opacity .1s ease;
+  opacity: 0;
 }
 .chart-tooltip.visible { opacity: 1; }
+@media (prefers-reduced-motion: no-preference) {
+  .chart-hover-point, .chart-tooltip { transition: opacity .1s ease; }
+}
 .chart-tooltip-title { font-size: 11px; font-weight: 700; color: var(--surface); margin-bottom: 4px; text-transform: uppercase; letter-spacing: .04em; }
-.chart-tooltip-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: #c7cad4; }
+.chart-tooltip-row { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--on-ink-muted); }
 .chart-tooltip-row b { color: var(--surface); margin-left: 10px; }
 .chart-tooltip-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex: none; }
 
 /* Verteilungen (Referrer/Geräte/Browser) */
 .split { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
 .split li { font-size: 12.5px; }
-.split .row { display: flex; justify-content: space-between; }
+/* Name | Anzahl | Anteil als feste Spalten, damit die Werte über alle Zeilen untereinander stehen. */
+.split .row { display: grid; grid-template-columns: minmax(0, 1fr) 100px 62px; column-gap: 10px; align-items: baseline; }
 .split .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.split .val { color: var(--muted2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.split .val-n, .split .val-pct { color: var(--muted2); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.split .val-pct { opacity: .75; }
+/* Handy: Name umbricht statt "…" (kein Tooltip, nur ~120px neben Anzahl und Anteil). */
+@media (max-width: 520px) { .split .name { white-space: normal; overflow-wrap: anywhere; } }
+.split li.rest .name { color: var(--muted2); }
+.split li.rest .meter span { background: var(--muted2); }
 .split .meter { height: 3px; background: var(--line2); border-radius: 0; margin-top: 4px; overflow: hidden; }
 .split .meter span { display: block; height: 100%; background: var(--ink); border-radius: 0; }
+
+/* Klickbare "Weitere (n)"-Zeile: öffnet den Dialog mit allen Einträgen. */
+.split .rest-btn {
+  all: unset; box-sizing: border-box; display: block; width: 100%; cursor: pointer;
+  font: inherit; color: inherit; border-radius: var(--radius-xs);
+}
+.split .rest-btn .meter { display: block; }
+.split .rest-btn:hover .name, .split .rest-btn:focus-visible .name { color: var(--accent); }
+.split .rest-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* Dialog "alle Einträge" (Basis .confirm-dialog); der Kopf bleibt beim Scrollen sichtbar.
+   Höhere Spezifität nötig: .confirm-dialog steht weiter unten und würde das Padding überschreiben. */
+.confirm-dialog.dist-dialog { max-width: 460px; padding: 0 24px 24px; }
+.dist-dialog-head {
+  position: sticky; top: 0; z-index: 1; background: var(--surface);
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 0 14px;
+}
+.dist-dialog-head h3 { margin: 0 0 4px; }
+.dist-dialog-sub { margin: 0; font-size: 12px; color: var(--muted2); }
+.dist-dialog-close {
+  all: unset; box-sizing: border-box; flex: none; width: 36px; height: 36px; margin: -6px -8px 0 0;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  font-size: 24px; line-height: 1; color: var(--muted); border-radius: var(--radius-xs);
+}
+.dist-dialog-close:hover { color: var(--ink); }
+.dist-dialog-close:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.dist-dialog-list { gap: 12px; }
 
 /* Tabelle */
 .tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; font-family: var(--sans); color: var(--ink); }
 .tbl th { text-align: left; color: var(--muted2); font-weight: 700; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; padding: 7px 10px 7px 0; border-bottom: 2px solid var(--ink); }
-/* word-break (nicht nur overflow-wrap): bei automatischem Tabellen-Layout
-   bezieht Chrome overflow-wrap nicht in die Spaltenbreiten-Berechnung mit
-   ein, ein langer unbrechbarer Referrer-String ("Letzte Klicks") sprengt
-   sonst trotzdem die Tabelle (und mit ihr die Seite) nach rechts. Zellen mit
-   eigenem max-width+ellipsis (siehe Änderungsverlauf, alte/neue URL)
-   überschreiben das per Inline-Style. */
+/* word-break (nicht nur overflow-wrap): Chrome bezieht overflow-wrap im automatischen Tabellenlayout nicht in die
+   Spaltenbreiten ein; Zellen mit eigenem max-width+ellipsis überschreiben das per Inline-Style. */
 .tbl td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line2); overflow-wrap: break-word; word-break: break-word; }
-/* overflow:hidden+ellipsis: ohne das läuft ein langer, unbrechbarer Wert
-   (Domain, Anmeldename) bei knapper Spaltenbreite (siehe die festen
-   width-Werte auf "Hinzugefügt am"/"Links" in domainsPage()) sichtbar über
-   die Zellengrenze hinweg in die Nachbarspalte, statt sauber abgeschnitten
-   zu werden – die Tabelle wächst hier nicht automatisch mit, weil
-   .linktable/.tbl explizit width:100% gesetzt haben. */
+/* Ellipsis: sonst läuft ein langer Wert bei knapper Spalte in die Nachbarspalte (width:100% lässt die Tabelle nicht mitwachsen). */
 .tbl td.cell-sub { color: var(--muted2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* table-layout:fixed statt inhaltsbasiert (nicht nur unter 760px – auch im
-   Tablet-Bereich ist die rechte Spalte neben der Sidebar schmal genug, dass
-   ein langer Referrer-String die Tabelle sonst sprengt). word-break allein
-   reicht nicht: Chrome bezieht overflow-wrap/word-break nicht in die
-   Spaltenbreiten-Berechnung im automatischen Layout mit ein. */
-.tbl { table-layout: fixed; }
-/* min-width + der umschließende .table-scroll (siehe linkDetail() in
-   views.js): ohne Untergrenze quetscht table-layout:fixed die Spalten auf
-   sehr schmalen Viewports (Mobile-Kartenbreite) bis auf wenige Pixel – dann
-   bricht word-break:break-word einzelne Wörter mitten im Zeichen, statt
-   sauber je Wort umzubrechen. Lieber ab dieser Breite horizontal scrollen
-   (wie bei den Link-Tabellen) als lesbare Wörter zerreißen.
-   :not(.linktable): Dashboard/Tresor/Zugangs-/Domainverwaltung tragen
-   ebenfalls die Klasse .tbl (siehe searchTable() in views.js), haben aber
-   schon ihr eigenes, vollständiges Card-Stacking fürs Mobile (siehe
-   .linktable td weiter unten) – ein min-width hier würde das nur wieder
-   aufbrechen und dieselbe Seiten-Überlauf-Klasse Bug zurückbringen. */
+/* table-layout:fixed (auch im Tablet-Bereich nötig): Chrome bezieht word-break im automatischen Layout nicht in die
+   Spaltenbreiten ein. Nicht für .linktable: dort ergab fixed gleich breite Spalten (abgeschnittene URLs, 0px-Spalte). */
+.tbl:not(.linktable) { table-layout: fixed; }
+/* min-width + .table-scroll: sonst quetscht fixed die Spalten auf wenige Pixel und word-break zerreißt Wörter; lieber
+   horizontal scrollen. :not(.linktable), da diese ein eigenes Card-Stacking haben, das min-width wieder aufbrechen würde. */
 .tbl:not(.linktable) { min-width: 560px; }
 
-/* Link-Tabelle (Meine Links): flache Zeilen statt gerundeter Karte, obere/
-   untere Kontur über den Kartenrahmen der umschließenden .table-card. */
+/* Letzte Klicks */
+#letzte-klicks { scroll-margin-top: 72px; }
+/* Verteilung + Letzte Klicks: unter 1480px untereinander (Verteilung 1 Spalte, ab 1041px 2; jede Liste braucht ~300px),
+   darüber nebeneinander 3:2 (Klicks links, Verteilung rechts in einer Spalte). */
+.detail-lower { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; }
+.dist-grid { display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); }
+/* Gemeinsame Kopfzeile der Karten: immer 40px hoch und mittig, damit alle Überschriften auf einer Höhe sitzen. */
+.card-head { display: flex; align-items: center; gap: 24px; row-gap: 6px; flex-wrap: wrap; min-height: 40px; margin-bottom: 10px; }
+.card-head h2, .stat-header h2 { margin: 0; }
+/* Listen-Überschriften im Stil der ".tbl th"-Spaltenköpfe; nur direkte Kinder, der Dialog-Titel (h3) bleibt unberührt. */
+.dist-grid > div > h3 {
+  margin: 0 0 7px; padding: 7px 0 6px; font-size: 10.5px; letter-spacing: .08em;
+  border-bottom: 2px solid var(--ink);
+}
+@media (width > 1040px) { .dist-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1480px) {
+  .chart-svg { height: 250px; }
+  .detail-lower { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+  #letzte-klicks { grid-column: 1; grid-row: 1; }
+  .dist-card { grid-column: 2; grid-row: 1; }
+  .dist-grid { grid-template-columns: minmax(0, 1fr); }
+}
+/* Spaltenbreiten in Prozent, so gewählt, dass Zeitpunkt und längste Domain auch bei ~610px Tabellenbreite ohne Kürzung passen. */
+.clicks-table .col-time { width: 26%; }
+.clicks-table .col-ref { width: 35%; }
+.clicks-table .col-device { width: 8%; }
+.clicks-table .col-browser { width: 15%; }
+.clicks-table .col-lang { width: 16%; }
+.clicks-table td.col-time { color: var(--muted2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.clicks-table td.col-lang { color: var(--muted2); letter-spacing: .04em; }
+.clicks-table td.col-lang abbr { text-decoration: none; cursor: help; }
+.clicks-table td.col-ref, .clicks-table td.col-device, .clicks-table td.col-browser, .clicks-table td.col-lang {
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; word-break: normal;
+}
+.clicks-table .device-icon { width: 16px; height: 16px; vertical-align: -3px; color: var(--muted); }
+.clicks-table tr.click-row:hover { background: color-mix(in srgb, var(--ink), transparent 96%); }
+.range-info { font-size: 12.5px; color: var(--muted2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pagination-nav { margin-left: auto; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.table-foot { margin: 14px 0 0; text-align: right; }
+@media (max-width: 1040px) {
+  /* Schmale Karte (Mobile, Tablet neben Sidebar): pro Klick zwei Zeilen, Quelle oben. */
+  .tbl.clicks-table { min-width: 0; }
+  .clicks-table, .clicks-table tbody { display: block; }
+  .clicks-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .clicks-table tr.click-row {
+    display: grid; grid-template-columns: auto auto 1fr; column-gap: 14px; row-gap: 3px; padding: 10px 0;
+    border-bottom: 1px solid var(--line2);
+  }
+  .clicks-table tr.click-row td { display: block; border: 0; padding: 0; width: auto; }
+  .clicks-table td.col-ref { grid-column: 1 / -1; grid-row: 1; }
+  .clicks-table td.col-time, .clicks-table td.col-device, .clicks-table td.col-browser {
+    grid-row: 2; font-size: 12px; color: var(--muted2);
+  }
+  .clicks-table .device-icon { width: 14px; height: 14px; vertical-align: -3px; }
+  .clicks-table tr.click-row td.col-lang { display: none; }
+  .pagination-nav { width: 100%; justify-content: space-between; margin-left: 0; }
+}
+
+/* Link-Tabelle (Meine Links) */
 .table-card { padding: 0; overflow: hidden; }
 .table-toolbar { display: flex; align-items: center; gap: 16px; padding: 18px 22px; flex-wrap: wrap; border-bottom: 1px solid var(--line2); }
 .table-toolbar .search-input { max-width: 260px; margin-right: auto; }
 .table-scroll { overflow-x: auto; }
+.tbl th.th-date { width: 155px; white-space: nowrap; }
+.tbl th.th-narrow { width: 50px; white-space: nowrap; }
+.tbl th.th-actions { width: 450px; }
+.tbl td.cell-ellipsis { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .linktable { width: 100%; border-collapse: collapse; font-family: var(--sans); font-size: 13.5px; color: var(--ink); }
 .linktable th {
   text-align: left; white-space: nowrap; color: var(--muted2); font-weight: 700; font-size: 10.5px;
-  text-transform: uppercase; letter-spacing: .08em; padding: 11px 14px; background: transparent;
+  text-transform: uppercase; letter-spacing: .08em; padding: 11px 12px; background: transparent;
   border-bottom: 2px solid var(--ink);
 }
-.linktable td { padding: 10px 14px; vertical-align: middle; border-bottom: 1px solid var(--line2); }
+.linktable td { padding: 10px 12px; vertical-align: middle; border-bottom: 1px solid var(--line2); }
 .linktable th:last-child, .linktable td:last-child { text-align: right; padding-right: 24px; }
 .linktable th:first-child, .linktable td:first-child { padding-left: 24px; }
 
-.page-size-btn { min-width: 40px; padding: 0 11px; }
 .pagination-arrows { display: flex; align-items: center; gap: 8px; }
 .pagination-arrow {
   display: inline-flex; align-items: center; justify-content: center;
@@ -604,20 +655,22 @@ button:disabled, button:disabled:hover {
   background: var(--surface); border: 1px solid var(--line);
   border-radius: var(--radius-sm); color: var(--ink); cursor: pointer;
 }
+.pagination-arrow.labeled { width: auto; padding: 0 14px; gap: 6px; font-size: 12.5px; font-weight: 600; text-decoration: none; }
 .pagination-arrow:hover { background: var(--ink); border-color: var(--ink); color: var(--surface); }
-.pagination-arrow:disabled, .pagination-arrow:disabled:hover { opacity: .4; cursor: not-allowed; background: var(--surface); border-color: var(--line2); color: var(--muted); }
+/* .disabled für die "Letzte Klicks"-Blättern-Links: ein <a> hat keinen nativen :disabled-Zustand. */
+.pagination-arrow:disabled, .pagination-arrow:disabled:hover,
+.pagination-arrow.disabled, .pagination-arrow.disabled:hover {
+  opacity: .4; cursor: not-allowed; background: var(--surface); border-color: var(--line2); color: var(--muted);
+}
 .linktable tbody tr:last-child td { border-bottom: none; }
 .linktable tbody tr:hover { background: var(--bg); }
 .linktable .nowrap { white-space: nowrap; }
-.linktable .url-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linktable .url-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .linktable .url-cell a { color: var(--muted); text-decoration: none; }
 .linktable .url-cell a:hover { color: var(--accent); }
 .linktable .desc-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* short-cell (Kopier-Icon + Slug): ohne max-width+ellipsis auf .slug lief
-   ein langer Slug (bis zu 64 Zeichen, siehe Wunsch-Kürzel) bei knapper
-   Spalte – z. B. im Gemeinsamen Tresor mit seiner zusätzlichen "Erstellt
-   von"-Spalte – sichtbar über die Zellengrenze in die Nachbarspalte hinein.
-   overflow:hidden auf der Zelle selbst als zweites Sicherheitsnetz. */
+/* max-width+ellipsis auf .slug: ein langer Slug (bis 64 Zeichen) läuft sonst in die Nachbarspalte;
+   overflow:hidden auf der Zelle als zweites Sicherheitsnetz. */
 .linktable .short-cell { overflow: hidden; }
 .linktable .slug {
   display: inline-block; max-width: 160px; vertical-align: middle;
@@ -626,196 +679,90 @@ button:disabled, button:disabled:hover {
 }
 .linktable .slug:hover { text-decoration: underline; }
 .linktable .badge { margin-left: 0; vertical-align: 1px; }
-/* Mehrere Aktions-Buttons in einer Tabellenzelle (z. B. Domainverwaltung:
-   "Als Standard setzen" + "Entfernen") – flex-wrap statt starrem
-   margin-right, sonst sprengt die Zelle bei wenig Platz die Tabellenbreite
-   und der zweite Button verschwindet hinter unsichtbarem horizontalem
-   Scroll (.table-scroll) statt einfach umzubrechen. display:flex (nicht
-   inline-flex) füllt die Zellenbreite komplett aus – inline-flex bemisst
-   sich sonst per Shrink-to-fit selbst auf ca. die Summenbreite der Buttons,
-   was bei genau passender Spaltenbreite durch Rundungsdifferenzen von unter
-   1px unnötig umbricht, obwohl eigentlich genug Platz da ist. */
+/* flex-wrap statt starrem margin-right, sonst sprengt die Zelle die Tabellenbreite; display:flex (nicht inline-flex),
+   da Shrink-to-fit bei knapper Spalte durch Subpixel-Rundung unnötig umbricht. */
 .row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
-/* Schmaleres horizontales Padding als der Standard-Button (10px 20px): in der
-   Domainverwaltung können hier bis zu drei Buttons gleichzeitig stehen
-   ("Testen"-Ergebnis + "Als Standard setzen" + "Entfernen") – der
-   Zeilenumbruch (s.o.) bleibt als Fallback, aber so passen die allermeisten
-   Kombinationen auf eine Zeile. Vertikales Padding/Schriftgröße bleiben beim
-   Standard, sonst wirken diese Buttons neben "Anlegen"/"Hinzufügen" auf
-   derselben Seite spürbar kleiner/leichter statt nur schmaler. */
+/* Schmaleres horizontales Padding (bis zu drei Buttons pro Zeile in der Domainverwaltung); vertikal Standard,
+   damit sie nicht kleiner wirken als andere Buttons. */
 .row-actions button, .row-actions .btn { padding: 10px 12px; }
-
-/* Link-/Nutzer-/Domain-Tabelle als Karten-Stapel statt seitlich scrollender
-   Tabelle unter der Sidebar-Bruchgrenze: jede <tr> wird zur Karte, jede <td>
-   zu einer Label/Wert-Zeile (Label kommt aus data-label, siehe
-   linkTableRow()/userTableRow()/domainTableRow() in views.js). Leeres
-   data-label (Aktions-Spalten wie "Details"/"Löschen") erzeugt bewusst ein
-   leeres ::before – rückt den Button per justify-content:space-between an
-   den rechten Rand, ohne einen sichtbaren, redundanten Label-Text. Muss
-   nach den .url-cell/.desc-cell-Basisregeln oben stehen, sonst gewinnen
-   die (gleiche Spezifität, aber früher im Dokument) trotz Media Query. */
-@media (max-width: 760px) {
-  /* Nur für .linktable: das wird zum Karten-Stapel und braucht deshalb kein
-     Scrollen mehr. Die reinen .tbl-Tabellen (Letzte Klicks/Änderungsverlauf
-     auf der Link-Detailseite, siehe linkDetail() in views.js) bleiben echte
-     Tabellen und brauchen overflow-x:auto (Basisregel oben) weiterhin, sonst
-     überläuft die ganze Seite statt nur die Tabelle zu scrollen. */
-  .table-scroll:has(.linktable) { overflow-x: visible; padding: 14px; }
-  /* Nicht display:none: das entfernt den <thead> auch aus dem
-     Accessibility-Tree, Screenreader-Nutzer:innen verlieren dadurch jede
-     Spalten-Zuordnung (die ::before-Labels unten sind rein visuell, werden
-     nicht zuverlässig vorgelesen). Gleiche Technik wie .sr-only – nur
-     visuell weg, für AT weiterhin als echte Tabellen-Kopfzeile vorhanden. */
-  .linktable thead {
-    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
-  }
-  .linktable, .linktable tbody, .linktable tr, .linktable td { display: block; width: 100%; }
-  .linktable tr {
-    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
-    box-shadow: var(--shadow); padding: 4px 14px;
-  }
-  .linktable tr + tr { margin-top: 12px; }
-  .linktable td {
-    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px;
-    padding: 9px 0; border-bottom: 1px solid var(--line2);
-    max-width: none; text-align: right; white-space: normal; word-break: break-word;
-  }
-  .linktable td:last-child { border-bottom: none; }
-  .linktable td:first-child, .linktable td:last-child { padding-left: 0; padding-right: 0; }
-  /* Flex-Kinder (der Slug-Link, Badges, Formulare …) behalten sonst ihre
-     eigene Mindestbreite nach Inhalt (min-width:auto per Spezifikation) und
-     ignorieren flex-wrap/word-break auf dem Elternelement – erst dieses
-     min-width:0 erlaubt ihnen, unter ihre Inhaltsbreite zu schrumpfen. */
-  .linktable td > * { min-width: 0; }
-  /* .nowrap sitzt spezifischer als die generische td-Regel oben und würde
-     hier sonst gewinnen. Bei kurzen, fest formatierten Werten (Datum,
-     Status-Badge) ist der Umbruch ein No-op – bei Short-Link (bis zu
-     64-Zeichen-Slug) und Erstellt von (bis zu 32-Zeichen-Nutzername) ist er
-     nötig, um Überlauf zu verhindern. Generisch statt pro Spalte, damit
-     keine weitere .nowrap-Zelle dieselbe Falle unbemerkt wiederholt. */
-  .linktable td.nowrap { white-space: normal; word-break: break-word; }
-  /* .cell-sub (Anmeldename/Domain) hat dieselbe Spezifitätsfalle über
-     .tbl td.cell-sub – gleicher Grund/gleiche Lösung wie oben bei .nowrap. */
-  .linktable td.cell-sub { white-space: normal; word-break: break-word; }
-  /* Gleiche Werte wie .linktable th (Desktop-Spaltenkopf) – beide sind
-     dieselbe Spalten-Bezeichnung, nur einmal als echter <th> und einmal als
-     ::before-Label auf der Karte. */
-  .linktable td::before {
-    content: attr(data-label); flex: none;
-    font-size: 10.5px; font-weight: 700; color: var(--muted2);
-    text-transform: uppercase; letter-spacing: .08em;
-  }
-  /* Ziel-URL/Beschreibung können sehr lang werden – statt einer einzeiligen
-     Ellipsis (die auf Kartenbreite kaum noch etwas zeigen würde) bricht der
-     Wert unter das Label um. */
-  .linktable .url-cell, .linktable .desc-cell {
-    flex-direction: column; align-items: flex-start; gap: 4px; text-align: left;
-    max-width: none; overflow: visible; text-overflow: clip; white-space: normal; word-break: break-word;
-  }
-  /* .slug hat auf Desktop eine eigene max-width+ellipsis (s.o.), unabhängig
-     vom umschließenden .nowrap-Reset auf Kartenbreite – ohne diesen Reset
-     würde der Slug hier weiterhin bei 160px abschneiden statt (wie
-     beabsichtigt, siehe Kommentar bei .linktable td.nowrap) umzubrechen. */
-  .linktable .short-cell { overflow: visible; }
-  .linktable .slug { max-width: none; overflow: visible; text-overflow: clip; white-space: normal; word-break: break-word; }
-}
 
 .copy-icon-btn {
   all: unset; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; margin-right: 2px; border-radius: var(--radius-xs);
-  color: var(--muted2); cursor: pointer; vertical-align: middle;
+  color: var(--muted2); cursor: pointer; vertical-align: middle; position: relative;
 }
+/* Klickfläche 28px (WCAG 2.5.8: mindestens 24px), ohne die Tabellenzeile höher zu machen. */
+.copy-icon-btn::before { content: ''; position: absolute; inset: -3px; }
 .copy-icon-btn:hover { background: var(--ink); color: var(--surface); }
 .copy-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .copy-icon { width: 15px; height: 15px; }
+/* Detailseite: sichtbarer Button mit Rahmen, 34px Klickfläche; in der Tabelle bleibt er kompakt. */
+.detail-head .copy-icon-btn { flex: none; width: 34px; height: 34px; margin: 0; border: 1px solid var(--line); color: var(--ink); }
+.detail-head .copy-icon { width: 17px; height: 17px; }
+.copy-icon-btn.copied, .copy-icon-btn.copied:hover { background: var(--success); color: var(--surface); }
+/* Wie die ghost-Buttons SVG/PNG: transparent, Hover blau; nach dem Kopieren grün. */
+.detail-head .copy-icon-btn:hover { background: transparent; border-color: var(--accent); color: var(--accent); }
+.detail-head .copy-icon-btn.copied, .detail-head .copy-icon-btn.copied:hover { background: transparent; border-color: var(--success); color: var(--success); }
 
-/* Statischer QR-Code Generator: nutzt .qrbox/.detail-grid aus der Detailseite
-   (siehe linkDetail) – Vorschau links, Formular rechts. Anders als dort steckt
-   der QR-Code als eingebettetes <svg> direkt in der qrbox statt als <img>. */
-.qrbox svg { display: block; width: 100%; height: auto; outline: 1px solid rgba(0, 0, 0, .1); outline-offset: -1px; }
+/* Statischer QR-Code Generator: nutzt .qrbox/.detail-grid der Detailseite; der QR-Code steckt hier als <svg> statt <img>. */
 .qrbox .dl form { flex: 1; margin: 0; }
 .qrbox .dl form .btn { width: 100%; }
 .color-pills { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-.color-pills .label-inline { font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; }
-/* Gleicher Reset wie bei .radio-row label oben – auch hier Options-Text
-   ("Vordergrund"/"Hintergrund"/"Hintergrund transparent"), kein Feld-Label.
-   Ohne den Reset war "Hintergrund transparent" durch Versalien+Sperrung
-   plus white-space:nowrap breit genug, um die Seite zu sprengen. */
+/* Options-Text, kein Feld-Label: Reset wie bei .radio-row label (sonst sprengt "Hintergrund transparent" mit Versalien+nowrap die Seite). */
 .color-pills label { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12.5px; color: var(--muted); cursor: pointer; white-space: nowrap; text-transform: none; letter-spacing: normal; }
-/* Checkbox wie die Radios bei Sichtbarkeit (.radio-row input[type=radio]):
-   feste 16px-Größe statt Browser-Standard, damit sie zur restlichen Zeile passt. */
+.color-pills .label-indent { margin-left: 12px; }
 .color-pills input[type=checkbox] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
-/* appearance:none entfernt den nativen Rahmen/Look des Browsers um die
-   Farbfläche (sonst "Box-in-Box"-Effekt trotz eigenem Rahmen/Radius außen) –
-   das Popup zum Farbwählen selbst bleibt nativ, lässt sich nicht stylen. */
+/* appearance:none vermeidet den "Box-in-Box"-Effekt; das Farbwahl-Popup bleibt nativ. */
 .color-pills input[type=color] {
   appearance: none; -webkit-appearance: none;
-  width: 30px; height: 30px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius-xs); cursor: pointer; background: #fff;
+  width: 30px; height: 30px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius-xs); cursor: pointer; background: var(--surface);
 }
 .color-pills input[type=color]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 0; overflow: hidden; }
 .color-pills input[type=color]::-webkit-color-swatch { border: none; border-radius: 0; }
 .color-pills input[type=color]::-moz-color-swatch { border: none; border-radius: 0; }
 .color-pills input[type=color]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-/* Hintergrundfarbe spielt keine Rolle mehr, wenn "transparent" angehakt ist –
-   Swatch bleibt bedienbar (kein disabled, einfacher als mit JS synchron zu
-   halten), wirkt aber sichtbar irrelevant. */
+/* Bei "transparent" irrelevant: Swatch bleibt bedienbar (kein disabled, ohne JS-Sync), wirkt aber ausgegraut. */
 .color-pills:has(input[name=light_transparent]:checked) input[name=light] { opacity: .35; }
-/* Schachbrett-Hintergrund hinter der QR-Vorschau, wenn deren eigener
-   Hintergrund transparent ist – sonst sieht "transparent" auf der weißen
-   .qrbox-Karte optisch identisch zu "weiß" aus. */
+/* Schachbrett hinter der Vorschau bei transparentem Hintergrund, sonst sähe es wie "weiß" aus. */
 .qr-preview-checker {
   background-image: conic-gradient(var(--line2) 90deg, transparent 90deg 180deg, var(--line2) 180deg 270deg, transparent 270deg);
   background-size: 16px 16px;
   border-radius: 0;
 }
 
-/* Statischer QR-Code Generator: Typ-Tabs (URL/Text/WLAN/EPC) – CSS-only per
-   :has() auf .qr-form, siehe qrTypeTabs()/qrTypePanels() in views.js. Struktur
-   (verstecktes Radio + Label/Span) damit es auch ohne JS klappt; die Optik
-   selbst kommt aus der geteilten Segmented-control-Regel weiter oben
-   (.range-group/.range-btn), hier nur noch das Radio/Label-spezifische. */
+/* Typ-Tabs (URL/Text/WLAN/EPC), CSS-only per :has() auf .qr-form. Verstecktes Radio + Label/Span, damit es ohne JS
+   klappt; die Optik kommt aus der Segmented-control-Regel oben. */
 .qr-type-tabs input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .qr-type-tabs label { margin: 0; cursor: pointer; }
 .qr-type-tabs span { display: inline-block; line-height: 40px; padding: 0 14px; }
-/* flex-direction/gap wirken erst, sobald ein Panel sichtbar wird (unten) –
-   sorgt z. B. beim EPC-Panel für denselben 20px-Zeilenabstand zwischen seinen
-   zwei .grid-form-Zeilen wie im Formular von "Erstellen". */
+/* Sichtbar per :has() unten; 20px Abstand wie im Formular von "Erstellen". */
 .qr-type-panel { display: none; flex-direction: column; gap: 20px; }
 .qr-form:has(#qt-url:checked) .qr-type-panel[data-panel="url"],
 .qr-form:has(#qt-text:checked) .qr-type-panel[data-panel="text"],
 .qr-form:has(#qt-wlan:checked) .qr-type-panel[data-panel="wlan"],
 .qr-form:has(#qt-epc:checked) .qr-type-panel[data-panel="epc"] { display: flex; }
+/* Browser ohne :has() (Firefox < 121): sonst blieben alle Panels unsichtbar; dort alle vier zeigen (Server liest nur den gewählten Typ). */
+@supports not selector(:has(*)) { .qr-type-panel { display: flex; } }
 
 /* Meldungen & Fuß */
 .flash { margin: 20px 32px 0; padding: 11px 20px; border-radius: var(--radius-xs); font-size: 13.5px; font-weight: 500; border: 1px solid; }
-.flash.ok { background: var(--accent-soft); border-color: var(--accent-soft-border); color: #16307e; }
-.flash.error { background: var(--danger-soft); border-color: var(--danger-soft-border); color: var(--danger); }
+.flash.ok { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-dark); }
+.flash.error { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
 .card .flash { margin: 0 0 12px; }
 
-/* Toast: die Redirect-Meldung aus layout() (nach Speichern/Löschen etc.) –
-   schwebt oben rechts statt den Textfluss zu verschieben, auf Höhe der
-   "← Zurück"-Zeile der Detailseite. Eingebettete Inline-Fehler (Login,
-   statischer QR-Code Generator) bleiben bewusst bei der einfachen .flash-Klasse. */
+/* Toast: Redirect-Meldung aus layout(), schwebt oben rechts auf Höhe der "← Zurück"-Zeile.
+   Inline-Fehler (Login, QR-Generator) bleiben bei .flash. */
 .flash.toast {
   position: fixed; top: max(30px, env(safe-area-inset-top) + 10px); right: max(32px, env(safe-area-inset-right) + 10px); z-index: 80;
   margin: 0; max-width: 360px; box-shadow: var(--shadow-hover);
   animation: toast-fade-in .2s ease, toast-fade-out .2s ease 4.5s forwards;
 }
-/* Opacity-only als reduced-motion-sichere Basis (Auto-Dismiss-Timing bleibt
-   identisch); der Slide kommt nur dazu, wenn Bewegung erlaubt ist – gleiche
-   Keyframe-Namen, per Cascade überschrieben. */
+/* Opacity-only als reduced-motion-sichere Basis; der Slide kommt nur bei erlaubter Bewegung dazu (gleiche Keyframe-Namen, per Cascade überschrieben). */
 @keyframes toast-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes toast-fade-out { to { opacity: 0; } }
 @media (prefers-reduced-motion: no-preference) {
   @keyframes toast-fade-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
   @keyframes toast-fade-out { to { opacity: 0; transform: translateY(-8px); } }
-}
-@media (max-width: 760px) {
-  .flash.toast {
-    top: max(20px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right));
-    left: max(20px, env(safe-area-inset-left)); max-width: none;
-  }
 }
 
 /* Login */
@@ -837,11 +784,9 @@ button:disabled, button:disabled:hover {
 .login-card .flash.error { width: 100%; margin: 0 0 16px; }
 
 .login-form { display: grid; gap: 22px; width: 100%; margin: 0 0 22px; text-align: left; }
-.login-form label { font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 7px; }
 .login-form input {
   width: 100%; height: auto; padding: 0 0 8px; font: inherit; font-size: 14.5px;
   background: transparent; color: var(--ink); border: none; border-bottom: 2px solid var(--line2); border-radius: 0;
-  transition: border-color .2s;
 }
 .login-form button {
   height: 44px; margin-top: 6px; padding: 0 20px; font: inherit; font-size: 12.5px; font-weight: 700;
@@ -851,9 +796,7 @@ button:disabled, button:disabled:hover {
 }
 .login-form button:hover { background: var(--accent); border-color: var(--accent); }
 
-/* SSO-Login (Authentik/OIDC, siehe loginPage() in views.js) – eigener,
-   zurückhaltender Button oberhalb des Passwort-Formulars, damit der
-   Standardweg (Passwort) optisch nicht verdrängt wird. */
+/* SSO-Login (OIDC): zurückhaltender Button über dem Passwort-Formular, damit der Standardweg nicht verdrängt wird. */
 .login-sso-btn {
   display: flex; align-items: center; justify-content: center;
   width: 100%; height: 44px; margin: 0 0 20px; font: inherit; font-size: 12.5px; font-weight: 700;
@@ -870,56 +813,41 @@ button:disabled, button:disabled:hover {
 /* Danger / Löschen mit Bestätigung */
 .danger-confirm { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 .danger-confirm .copy { flex: 1 1 220px; min-width: 0; }
-.danger-confirm .copy b { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--danger); display: block; }
-.danger-confirm .copy p { margin: 4px 0 0; font-size: 12.5px; color: var(--muted2); text-wrap: pretty; }
-/* min-width:0 auf Form UND Feld: sonst behält die Form (als Flex-Kind von
-   .danger-confirm) bzw. das Feld (als Flex-Kind der Form) ihre 180px-
-   Wunschbreite ungeachtet von max-width:100% – sprengt in der schmalen
-   Tablet-Spalte neben der Sidebar den Container. */
+.danger-confirm .copy h2 { color: var(--danger); margin: 0 0 4px; }
+.danger-confirm .copy p { margin: 0; font-size: 12.5px; color: var(--muted2); text-wrap: pretty; }
+.danger-confirm .copy p b { color: var(--ink); }
+/* min-width:0 auf Form und Feld, sonst sprengen sie in der schmalen Tablet-Spalte den Container (180px-Wunschbreite). */
 .danger-confirm form { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; min-width: 0; }
 .danger-confirm input[type=text] { width: 180px; max-width: 100%; min-width: 0; }
 
-/* Bestätigungs-Modal (natives <dialog>, siehe app.js/layout() in views.js) –
-   eigenes Styling statt Browser-Standard, plus abgedunkelter Hintergrund. */
+/* Bestätigungs-Modal (natives <dialog>): eigenes Styling + abgedunkelter Hintergrund. */
 .confirm-dialog {
   border: 1px solid var(--ink); border-radius: var(--radius); padding: 24px;
   box-shadow: var(--shadow-hover); max-width: 420px; width: calc(100vw - 32px);
-  /* Deckelt den Dialog auf die Viewport-Höhe statt unbegrenzt zu wachsen, für
-     sehr langen Bestätigungstext auf kleinen Bildschirmen. Wirkt sich sonst
-     nirgends aus: ohne überlaufenden Inhalt bleibt der Dialog exakt so
-     kompakt wie bisher. (Löst NICHT das Dropdown-Überlauf-Problem beim
-     "Links übertragen an"-Select – ein <dialog> im Top-Layer bezieht dessen
-     absolut positioniertes Menü nicht in seinen eigenen Scroll-Bereich ein;
-     das übernimmt stattdessen positionMenu() in app.js.) */
-  max-height: calc(100vh - 64px); overflow-y: auto; overscroll-behavior: contain;
+  /* Deckelt den Dialog auf die Viewport-Höhe (langer Text, kleine Screens). Löst nicht den Dropdown-Überlauf im
+     "Links übertragen an"-Select – das macht positionMenu() in app.js. */
+  max-height: calc(100vh - 64px); max-height: calc(100dvh - 64px); /* dvh: ohne die einklappende Adressleiste am Handy */
+  overflow-y: auto; overscroll-behavior: contain;
   background: var(--surface); color: var(--ink);
 }
-.confirm-dialog::backdrop { background: rgba(14, 18, 32, .5); }
-.confirm-dialog h3 { font-size: 16px; font-weight: 700; color: var(--ink); text-transform: none; letter-spacing: -0.01em; margin: 0 0 10px; }
+.confirm-dialog::backdrop { background: var(--scrim); }
+.confirm-dialog h2, .confirm-dialog h3 { font-size: 16px; font-weight: 700; color: var(--ink); text-transform: none; letter-spacing: -0.01em; margin: 0 0 10px; }
 .confirm-dialog-text { margin: 0 0 20px; font-size: 13.5px; color: var(--muted); line-height: 1.55; text-wrap: pretty; }
 .confirm-dialog .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 
-/* Mobile-Topleiste (nur Marke): unter der Sidebar-Bruchgrenze sichtbar. Die
-   primäre Navigation läuft dort über .bottom-nav (weiter unten); Account/
-   Admin-Einstellungen weiterhin über die eigentlich unveränderte Sidebar als
-   Overlay, jetzt geöffnet über den "Mehr"-Tab statt einem eigenen
-   Hamburger-Button (siehe app.js). */
+/* Mobile-Topleiste (nur Marke), unter der Sidebar-Bruchgrenze; Navigation über .bottom-nav, Account/Admin über die
+   Sidebar als Overlay ("Mehr"-Tab). */
 .mobile-topbar {
   display: none; align-items: center; gap: 12px;
   padding: max(14px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) 14px max(20px, env(safe-area-inset-left));
   background: var(--surface); border-bottom: 1px solid var(--ink);
 }
-/* Eigener Link statt dem Sidebar-Dropdown (Profil/Einstellungen/Abmelden
-   bleiben über den "Mehr"-Tab erreichbar) – hier reicht ein direkter Sprung
-   zum Konto, kein zweites Dropdown mit eigener JS-Instanz nötig. */
+/* Direkter Sprung zum Konto statt zweitem Dropdown; Profil/Einstellungen/Abmelden bleiben über "Mehr" erreichbar. */
 .mobile-topbar-account { margin-left: auto; flex: none; display: flex; border-radius: 50%; }
 .mobile-topbar-account:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sidebar-backdrop { display: none; }
 
-/* Bottom-Navigation (Mobile): ersetzt die primäre Rolle des früheren
-   Hamburger-Menüs – die vier Hauptziele direkt als Tabs, "Erstellen" als
-   erhöhter Center-Button (angelehnt an bekannte App-Patterns), "Mehr" öffnet
-   die Sidebar für Account/Admin-Einstellungen. */
+/* Bottom-Navigation (Mobile): vier Hauptziele als Tabs, "Erstellen" als erhöhter Center-Button, "Mehr" öffnet die Sidebar. */
 .bottom-nav {
   display: none; align-items: flex-end;
   background: var(--surface); border-top: 1px solid var(--ink);
@@ -945,29 +873,21 @@ button:disabled, button:disabled:hover {
 .bottom-nav-create:focus-visible .bottom-nav-create-circle { outline: 2px solid var(--accent); outline-offset: 2px; }
 .bottom-nav-create-icon { width: 22px; height: 22px; }
 
+/* Mobile (max-width 760px, Bruchgrenze der Sidebar; app.js: mobileNavQuery). Steht am Ende, damit es die Desktop-Basisregeln
+   oben überschreibt (gleiche Spezifität). */
 @media (max-width: 760px) {
-  /* minmax(0, 1fr) statt bloßem 1fr: sonst gilt auf dieser Breite exakt
-     dieselbe min-width:auto-Falle wie beim Tablet-Fix bei .detail-grid
-     weiter oben – nur dass sie hier zusätzlich auch .cols-3 trifft (gleiche
-     Spezifität, aber später im Dokument als .cols-3 selbst), weil .cols-3-
-     Elemente immer auch die Klasse .cols tragen. Ohne das hier: eine sehr
-     lange, unbrechbare Zeichenkette (z. B. ein Referrer-String in der
-     Klick-Aufschlüsselung) sprengt die Spalte samt Seite nach rechts. */
-  .cols, .detail-grid { grid-template-columns: minmax(0, 1fr); }
-  /* Unterer Rand deckt die fixe .bottom-nav ab (~54px Eigenhöhe + Safe-Area),
-     damit kein Seiteninhalt dahinter verschwindet. */
+  /* minmax(0, 1fr): min-width:auto-Falle wie bei .detail-grid, sonst sprengt eine lange Zeichenkette die Spalte. */
+  .detail-grid { grid-template-columns: minmax(0, 1fr); }
+  /* Unterer Rand deckt die fixe .bottom-nav ab (~54px + Safe-Area). */
   main { padding: 24px 20px calc(70px + env(safe-area-inset-bottom, 0px)); }
   .mobile-topbar { display: flex; }
   .bottom-nav { display: flex; position: fixed; left: 0; right: 0; bottom: 0; z-index: 50; }
-  /* "+ Erstellen" über die volle Breite – größeres Tap-Ziel auf schmalen
-     Screens statt der kompakten Desktop-Breite. */
+  /* "+ Erstellen" über volle Breite: größeres Tap-Ziel. */
   .create-actions { align-items: stretch; width: 100%; margin-left: 0; }
   .btn-create { width: 100%; justify-content: center; }
-  /* Dieselbe Sidebar wie am Desktop, nur als von links einfahrendes Overlay
-     statt sticky in der Layout-Spalte – Struktur/Styling der Einträge
-     selbst bleibt unverändert. */
+  /* Sidebar als von links einfahrendes Overlay statt sticky. */
   .sidebar {
-    position: fixed; top: 0; left: 0; height: 100vh; z-index: 60;
+    position: fixed; top: 0; left: 0; height: 100vh; height: 100dvh; z-index: 60;
     max-width: 85vw; box-shadow: var(--shadow-hover);
     transform: translateX(-100%);
     padding-left: max(14px, env(safe-area-inset-left));
@@ -976,15 +896,62 @@ button:disabled, button:disabled:hover {
   .sidebar.open { transform: translateX(0); }
   .sidebar-backdrop.open {
     display: block; position: fixed; inset: 0; z-index: 55;
-    background: rgba(14, 18, 32, .5);
+    background: var(--scrim);
   }
+  body.sidebar-open-lock { overflow: hidden; }
+  .flash.toast {
+    top: max(20px, env(safe-area-inset-top)); right: max(20px, env(safe-area-inset-right));
+    left: max(20px, env(safe-area-inset-left)); max-width: none;
+  }
+  /* Link-Tabelle als Karten-Stapel: <tr> = Karte, <td> = Label/Wert-Zeile (Label aus data-label). Leeres data-label
+     erzeugt bewusst ein leeres ::before, das den Button per space-between rechts hält. Die reinen .tbl-Tabellen
+     bleiben scrollbar, sonst überläuft die Seite. */
+  .table-scroll:has(.linktable) { overflow-x: visible; padding: 14px; }
+  /* Nicht display:none: das entfernt den <thead> aus dem Accessibility-Tree; wie .sr-only nur visuell versteckt. */
+  .linktable thead {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+    overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .linktable, .linktable tbody, .linktable tr, .linktable td { display: block; width: 100%; }
+  .linktable tr {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 4px 14px;
+  }
+  .linktable tr + tr { margin-top: 12px; }
+  .linktable td {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px;
+    padding: 9px 0; border-bottom: 1px solid var(--line2);
+    max-width: none; text-align: right; white-space: normal; word-break: break-word;
+  }
+  .linktable td:last-child { border-bottom: none; }
+  .linktable td:first-child, .linktable td:last-child { padding-left: 0; padding-right: 0; }
+  /* Flex-Kinder behalten sonst min-width:auto und ignorieren flex-wrap/word-break; min-width:0 erlaubt das Schrumpfen. */
+  .linktable td > * { min-width: 0; }
+  /* .nowrap ist spezifischer als die td-Regel oben; Umbruch nötig bei Short-Link (Slug bis 64) und Erstellt von (bis 32).
+     Generisch, damit keine weitere .nowrap-Zelle die Falle wiederholt. */
+  .linktable td.nowrap { white-space: normal; word-break: break-word; }
+  /* .cell-sub: gleiche Spezifitätsfalle über .tbl td.cell-sub. */
+  .linktable td.cell-sub { white-space: normal; word-break: break-word; }
+  /* Gleiche Werte wie .linktable th: dieselbe Spaltenbezeichnung, hier als ::before-Label. */
+  .linktable td::before {
+    content: attr(data-label); flex: none;
+    font-size: 10.5px; font-weight: 700; color: var(--muted2);
+    text-transform: uppercase; letter-spacing: .08em;
+  }
+  /* Lange Ziel-URL/Beschreibung bricht unter das Label um statt einzeiliger Ellipsis. */
+  .linktable .url-cell, .linktable .desc-cell {
+    flex-direction: column; align-items: flex-start; gap: 4px; text-align: left;
+    max-width: none; overflow: visible; text-overflow: clip; white-space: normal; word-break: break-word;
+  }
+  /* Slug: Desktop-max-width+ellipsis zurücksetzen, sonst würde er bei 160px abschneiden statt umzubrechen. */
+  .linktable .short-cell { overflow: visible; }
+  .linktable .slug { max-width: none; overflow: visible; text-overflow: clip; white-space: normal; word-break: break-word; }
 }
 @media (max-width: 760px) and (prefers-reduced-motion: no-preference) {
   .sidebar { transition: transform .2s ease; }
 }
-body.sidebar-open-lock { overflow: hidden; }
 @media (prefers-reduced-motion: no-preference) {
-  .split .meter span { transition: width 0.4s ease; }
   button, .btn { transition: transform .1s ease; }
   .btn-create { transition: transform .1s ease; }
+  .login-form input { transition: border-color .2s; }
 }

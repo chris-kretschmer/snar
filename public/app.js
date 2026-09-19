@@ -1,39 +1,33 @@
-// The only client-side JS: custom dropdown & datepicker, copy buttons,
-// delete confirmation, search/pagination, profile menu,
-// stats chart time ranges. Everything else is rendered server-side.
+// The only client-side JS; everything else is rendered server-side.
 
-// Close a popover on a click outside the wrapper, or on Escape.
-// composedPath() instead of contains(): survives DOM rebuilds inside the
-// wrapper (e.g. the datepicker's freshly rebuilt day grid).
+// Close a popover on an outside click or Escape. composedPath() instead of
+// contains() survives DOM rebuilds inside the wrapper (e.g. the day grid).
 function closeOnOutside(wrapper, close) {
   document.addEventListener('click', (e) => { if (!e.composedPath().includes(wrapper)) close(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
 }
 
-// Shared wrapper scaffold for the custom dropdown and custom datetime: the
-// real form element gets moved into a wrapper <div> and taken out of tab
-// order, the trigger button takes over both.
+// Shared scaffold for custom dropdown/datetime: the real element moves into a
+// wrapper and out of tab order; the trigger button takes over.
 function wrapControl(el, wrapperClass) {
   const wrapper = document.createElement('div');
   wrapper.className = wrapperClass;
   el.insertAdjacentElement('beforebegin', wrapper);
   wrapper.appendChild(el);
   el.tabIndex = -1;
+  el.setAttribute('aria-hidden', 'true'); // the visible trigger is the accessible control
   return wrapper;
 }
 
-// <label for="…"> should focus the visible trigger, not the now-hidden
-// original (buttons are "labelable").
+// <label for> should focus the visible trigger, not the hidden original.
 function reassignLabel(sourceEl, trigger) {
   if (!sourceEl.id) return;
   trigger.id = sourceEl.id + '-trigger';
   document.querySelector(`label[for="${sourceEl.id}"]`)?.setAttribute('for', trigger.id);
 }
 
-// Custom dropdown menu in the app's own style instead of the native
-// <option> list, which can't be styled consistently across browsers. The
-// real <select> stays invisible in the DOM as the source of truth (form
-// value, no-JS fallback – display:none selects still get submitted).
+// Custom dropdown instead of the unstylable native <option> list. The real
+// <select> stays hidden as source of truth (form value, no-JS fallback).
 const CHEVRON_SVG = '<svg class="chevron-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M11.625 14.913q-.175-.063-.325-.213l-4.6-4.6q-.275-.275-.275-.7t.275-.7t.7-.275t.7.275l3.9 3.9l3.9-3.9q.275-.275.7-.275t.7.275t.275.7t-.275.7l-4.6 4.6q-.15.15-.325.213t-.375.062t-.375-.062"/></svg>';
 
 document.querySelectorAll('select').forEach((select) => {
@@ -58,11 +52,8 @@ document.querySelectorAll('select').forEach((select) => {
   menu.setAttribute('role', 'listbox');
   wrapper.appendChild(menu);
 
-  // Rebuilds the label + menu entries from the current options state –
-  // needed for selects whose options only get set via JS after the initial
-  // render (e.g. "Links übertragen an" in the delete-account modal), which
-  // would otherwise stay empty forever: the real <select> is made
-  // invisible/inert above, only this menu, built here, is ever visible.
+  // Rebuilds label + entries from the current options; needed for selects
+  // whose options are set via JS after render (delete-account modal).
   function buildMenu() {
     syncLabel();
     menu.innerHTML = '';
@@ -70,13 +61,16 @@ document.querySelectorAll('select').forEach((select) => {
       const item = document.createElement('button');
       item.type = 'button';
       item.className = 'custom-select-option' + (i === select.selectedIndex ? ' active' : '');
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(i === select.selectedIndex));
       item.textContent = opt.textContent;
       item.addEventListener('click', () => {
         select.selectedIndex = i;
         select.dispatchEvent(new Event('change', { bubbles: true }));
         syncLabel();
-        menu.querySelectorAll('.custom-select-option').forEach((el) => el.classList.remove('active'));
+        menu.querySelectorAll('.custom-select-option').forEach((el) => { el.classList.remove('active'); el.setAttribute('aria-selected', 'false'); });
         item.classList.add('active');
+        item.setAttribute('aria-selected', 'true');
         closeMenu();
       });
       menu.appendChild(item);
@@ -85,15 +79,10 @@ document.querySelectorAll('select').forEach((select) => {
   buildMenu();
   select.addEventListener('options-changed', buildMenu);
 
-  // Opens downward or upward, whichever has more room, and caps its own
-  // height to the actually available space (with its own scroll, see
-  // .custom-select-menu in style.css). Needed for selects with a variable
-  // option count only known at runtime (e.g. "Links übertragen an" in the
-  // delete-account modal): a fixed direction isn't enough there – with few
-  // options, "down" overflows a small modal, with many options "up"
-  // overflows just as much. Measured against the viewport (not the
-  // dialog), because a <dialog> in the top layer doesn't bring the
-  // overflowing menu area into its own scroll.
+  // Opens down or up, whichever has more room, and caps its height to the
+  // available space (own scroll, see style.css). A fixed direction fails for
+  // option counts only known at runtime. Measured against the viewport, since
+  // a top-layer <dialog> doesn't scroll an overflowing menu.
   const MENU_MAX = 240, MENU_MARGIN = 12;
   function positionMenu() {
     const rect = trigger.getBoundingClientRect();
@@ -106,10 +95,7 @@ document.querySelectorAll('select').forEach((select) => {
   }
 
   function closeMenu() { menu.classList.remove('open'); trigger.setAttribute('aria-expanded', 'false'); }
-  // No stopPropagation: the click should keep bubbling up to document so
-  // other open popovers (datepicker, profile menu) can close. This
-  // element's own outside-click listener recognizes the trigger via
-  // wrapper.contains().
+  // No stopPropagation: the click must reach document so other open popovers close.
   trigger.addEventListener('click', () => {
     if (!menu.classList.contains('open')) positionMenu();
     const open = menu.classList.toggle('open');
@@ -118,10 +104,8 @@ document.querySelectorAll('select').forEach((select) => {
   closeOnOutside(wrapper, closeMenu);
 });
 
-// Custom date/time picker (same principle as the custom dropdown above):
-// the real <input type="datetime-local"> stays invisible in the DOM as the
-// source of truth; native picker popups can't be styled consistently in
-// the app's design across browsers.
+// Custom date/time picker (same principle as the dropdown): the real
+// <input type="datetime-local"> stays hidden as source of truth.
 const DT_MONTH_NAMES = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
 const DT_WEEKDAYS = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
 const DT_CALENDAR_SVG = '<svg class="dt-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M5 22q-.825 0-1.412-.587T3 20V6q0-.825.588-1.412T5 4h1V2h2v2h8V2h2v2h1q.825 0 1.413.588T21 6v14q0 .825-.587 1.413T19 22zm0-2h14V10H5zM5 8h14V6H5zm0 0V6zm7 6q-.425 0-.712-.288T11 13t.288-.712T12 12t.713.288T13 13t-.288.713T12 14m-4.712-.288Q7 13.426 7 13t.288-.712T8 12t.713.288T9 13t-.288.713T8 14t-.712-.288M16 14q-.425 0-.712-.288T15 13t.288-.712T16 12t.713.288T17 13t-.288.713T16 14m-4 4q-.425 0-.712-.288T11 17t.288-.712T12 16t.713.288T13 17t-.288.713T12 18m-4.712-.288Q7 17.426 7 17t.288-.712T8 16t.713.288T9 17t-.288.713T8 18t-.712-.288M16 18q-.425 0-.712-.288T15 17t.288-.712T16 16t.713.288T17 17t-.288.713T16 18"/></svg>';
@@ -133,10 +117,8 @@ const dtPad = (n) => String(n).padStart(2, '0');
 document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
   const wrapper = wrapControl(input, 'custom-datetime');
 
-  // Timezone correction: the browser's UTC offset (minutes) is sent along
-  // as a hidden field, so the server converts the input to UTC exactly.
-  // Without JS, the field is missing and the server falls back to its own
-  // timezone as an approximation.
+  // The browser's UTC offset (minutes) goes along as a hidden field so the
+  // server converts exactly; without JS it falls back to its own timezone.
   const tzField = document.createElement('input');
   tzField.type = 'hidden';
   tzField.name = 'tz_offset';
@@ -190,9 +172,8 @@ document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
   let minute = 59;
 
   function parseValue() {
-    // The server sends the stored UTC value along as data-utc – derive the
-    // display in the browser's timezone from that (the value itself is
-    // just the no-JS fallback in server local time).
+    // data-utc carries the stored UTC value; display in the browser's timezone
+    // (the plain value is only the no-JS fallback in server local time).
     const utc = input.dataset.utc;
     if (utc) {
       const d = new Date(utc.replace(' ', 'T') + 'Z');
@@ -210,6 +191,9 @@ document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
       selectedDate = { y, m: m - 1, d };
       hour = hh; minute = mm;
       viewDate = new Date(y, m - 1, 1);
+      // No data-utc after a failed validation (re-rendered with browser-local
+      // input): without this the resubmit has no tz_offset.
+      tzField.value = String(new Date(y, m - 1, d, hh, mm).getTimezoneOffset());
     } else {
       selectedDate = null;
       hour = 23; minute = 59;
@@ -288,6 +272,11 @@ document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
   hourInput.addEventListener('input', () => { hourInput.value = hourInput.value.replace(/[^0-9]/g, '').slice(0, 2); });
   minuteInput.addEventListener('input', () => { minuteInput.value = minuteInput.value.replace(/[^0-9]/g, '').slice(0, 2); });
 
+  // The panel sits inside the form: Enter would submit it, so confirm the panel instead.
+  [hourInput, minuteInput].forEach((field) => field.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); panel.querySelector('.dt-apply-btn').click(); }
+  }));
+
   panel.querySelector('.dt-apply-btn').addEventListener('click', () => {
     if (!selectedDate) {
       const t = new Date();
@@ -312,8 +301,7 @@ document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
     minuteInput.value = dtPad(minute);
     panel.classList.remove('align-right');
     panel.classList.add('open');
-    // Only measurable after showing it: if the panel overflows the
-    // viewport on the right (narrow field near the right edge), align it right.
+    // Only measurable once shown: align right if it overflows the viewport.
     if (panel.getBoundingClientRect().right > document.documentElement.clientWidth - 8) {
       panel.classList.add('align-right');
     }
@@ -342,41 +330,32 @@ document.addEventListener('click', async (e) => {
   if (!btn) return;
   try {
     await navigator.clipboard.writeText(btn.dataset.copy);
-    // Icon-/Text-Tausch allein wird von Screenreadern nicht zuverlässig
-    // bemerkt (weder reine Icon-Swaps noch title-Änderungen lösen eine
-    // Ansage aus) – die eigentliche Bestätigung läuft über diese Live-Region.
+    // Icon-/Text-Tausch wird von Screenreadern nicht zuverlässig angesagt –
+    // die Bestätigung läuft über diese Live-Region.
     if (copyAnnouncer) {
       copyAnnouncer.textContent = 'Link kopiert';
       setTimeout(() => { copyAnnouncer.textContent = ''; }, 1500);
     }
-    if (btn.classList.contains('copy-icon-btn')) {
-      const oldHtml = btn.innerHTML;
-      const oldTitle = btn.title;
-      btn.innerHTML = COPY_CHECK_SVG;
-      btn.title = 'Kopiert';
-      setTimeout(() => { btn.innerHTML = oldHtml; btn.title = oldTitle; }, 1500);
-    } else {
-      const old = btn.textContent;
-      btn.textContent = 'Kopiert ✓';
-      setTimeout(() => { btn.textContent = old; }, 1500);
-    }
+    // Original label is stored once (dataset): a second click within 1.5s
+    // would otherwise capture "Kopiert" and restore that forever.
+    const isIcon = btn.classList.contains('copy-icon-btn');
+    if (btn.dataset.copyOrig === undefined) btn.dataset.copyOrig = isIcon ? btn.innerHTML : btn.textContent;
+    if (btn.dataset.copyOrigTitle === undefined) btn.dataset.copyOrigTitle = btn.title;
+    if (isIcon) { btn.innerHTML = COPY_CHECK_SVG; btn.title = 'Kopiert'; btn.classList.add('copied'); } else { btn.textContent = 'Kopiert ✓'; }
+    clearTimeout(btn._copyTimer);
+    btn._copyTimer = setTimeout(() => {
+      if (isIcon) { btn.innerHTML = btn.dataset.copyOrig; btn.title = btn.dataset.copyOrigTitle; btn.classList.remove('copied'); } else { btn.textContent = btn.dataset.copyOrig; }
+    }, 1500);
   } catch {
     window.prompt('Zum Kopieren: Strg+C drücken', btn.dataset.copy);
   }
 });
 
-// Domain-Erreichbarkeits-Check (Domainverwaltung): rein manuell per Klick auf
-// "Testen", niemals automatisch beim Laden – siehe Kommentar bei POST
-// .../check-reachability in server.js (DNS/Reverse-Proxy einer frisch
-// eingetragenen Domain sind oft noch nicht fertig, ein automatischer Check
-// würde das fälschlich als "nicht erreichbar" zeigen). Der Button selbst wird
-// zum Ergebnis (Label + Farbe wechseln zu "Erreichbar"/"Nicht erreichbar"),
-// bleibt aber klickbar – ein weiterer Klick prüft einfach erneut. Text statt
-// reiner Farbe/Icon: Wortbedeutung ist eindeutig unabhängig von
-// Farbwahrnehmung (Rot-Grün-Schwäche), rein farbcodierte Information wäre
-// ohnehin ein WCAG-Verstoß. Das Ergebnis geht zusätzlich in dieselbe
-// Live-Region wie die Kopier-Bestätigung oben, sonst bekommen
-// Screenreader-Nutzer:innen vom reinen Label-/Farbwechsel nichts mit.
+// Domain-Erreichbarkeits-Check: nur manuell per Klick, nie automatisch beim
+// Laden – DNS/Reverse-Proxy einer neuen Domain sind oft noch nicht fertig
+// (siehe check-reachability in server.js). Der Button zeigt das Ergebnis als
+// Text + Farbe (nicht nur Farbe, WCAG) und bleibt klickbar zum erneuten
+// Prüfen; das Ergebnis geht auch in die Live-Region der Kopier-Bestätigung.
 document.querySelectorAll('.reach-test-btn').forEach((btn) => {
   btn.addEventListener('click', async () => {
     btn.classList.remove('ok', 'fail');
@@ -402,33 +381,76 @@ document.querySelectorAll('.reach-test-btn').forEach((btn) => {
   });
 });
 
-// "← Zurück" breadcrumb: uses real browser history to return to the actual
-// page of origin (e.g. personal/shared vault), instead of always landing
-// on one fixed page. Without JS, or without a matching referrer (page
-// opened directly via URL, linked from outside), the href fallback applies.
-document.querySelectorAll('a[data-back]').forEach((a) => {
-  a.addEventListener('click', (e) => {
-    if (window.history.length > 1 && document.referrer && new URL(document.referrer).origin === location.origin) {
-      e.preventDefault();
-      history.back();
-    }
-  });
-});
+// "← Zurück" breadcrumb: real browser history returns to the actual page of
+// origin (e.g. personal/shared vault). Without JS or a same-origin referrer
+// the href fallback applies.
+//
+// The detail page reloads itself for click paging and the custom date range,
+// each a history entry of its own, so history.back() alone would step through
+// them. Every entry keeps in history.state how many same-page entries lie
+// before the page of origin; "Zurück" skips them with history.go(-(depth + 1)).
+// Depth is derived from the previous page via sessionStorage keyed by
+// path+query (document.referrer never carries the #fragment).
+const backLinks = document.querySelectorAll('a[data-back]');
+if (backLinks.length) {
+  const pathQuery = (u) => u.pathname + u.search;
+  const store = {
+    get(k) { try { return JSON.parse(sessionStorage.getItem('snarBack:' + k)); } catch { return null; } },
+    set(k, v) { try { sessionStorage.setItem('snarBack:' + k, JSON.stringify(v)); } catch { /* storage blocked: fall back to plain history.back() */ } },
+  };
+  let ref = null;
+  try { ref = document.referrer ? new URL(document.referrer) : null; } catch { /* malformed referrer */ }
+  const sameOrigin = !!ref && ref.origin === location.origin;
 
-// Confirmation dialog before submitting (instead of inline onsubmit: there,
-// the text would land in a JS string context, which HTML escaping doesn't secure).
+  // Nav highlight: the server derives it from the Referer, which on a reloaded
+  // detail page is the page itself – so the first entry records the highlight
+  // and later ones restore it.
+  const navItems = () => [...document.querySelectorAll('a.navlink, a.bottom-nav-item, a.bottom-nav-create')];
+  const activeNavHref = () => {
+    const a = navItems().find((x) => x.classList.contains('active') || x.getAttribute('aria-current') === 'page');
+    return a ? a.getAttribute('href') : null;
+  };
+
+  let entry = history.state && history.state.snarBack;
+  if (!entry) {
+    const prev = sameOrigin && ref.pathname === location.pathname ? store.get(pathQuery(ref)) : null;
+    entry = prev
+      ? { depth: prev.depth + 1, hasOrigin: prev.hasOrigin, nav: prev.nav }
+      : { depth: 0, hasOrigin: sameOrigin, nav: activeNavHref() };
+    try { history.replaceState({ ...(history.state || {}), snarBack: entry }, ''); } catch { /* ignore */ }
+  }
+  store.set(pathQuery(location), entry);
+
+  if (entry.nav && entry.nav !== activeNavHref()) {
+    navItems().forEach((item) => {
+      const on = item.getAttribute('href') === entry.nav;
+      if (!item.classList.contains('bottom-nav-create')) item.classList.toggle('active', on);
+      if (on) item.setAttribute('aria-current', 'page'); else item.removeAttribute('aria-current');
+    });
+  }
+
+  backLinks.forEach((a) => {
+    a.addEventListener('click', (e) => {
+      // Modifier and middle clicks keep their normal new-tab meaning.
+      if (e.defaultPrevented || e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+      if (window.history.length > 1 && entry.hasOrigin) {
+        e.preventDefault();
+        history.go(-(entry.depth + 1));
+      }
+    });
+  });
+}
+
+// Not inline onsubmit: the text would land in a JS string context, which HTML escaping doesn't secure.
 document.querySelectorAll('form[data-confirm]').forEach((form) => {
   form.addEventListener('submit', (e) => {
     if (!window.confirm(form.dataset.confirm)) e.preventDefault();
   });
 });
 
-// Custom confirmation modal (native <dialog>, see layout() in views.js)
-// instead of window.confirm() – for forms with data-confirm-modal instead
-// of data-confirm, when the text needs more explanation than a browser
-// popup allows. form.submit() (not requestSubmit()) on confirm
-// deliberately bypasses the 'submit' event, otherwise this same listener
-// would catch itself again.
+// Custom confirm modal (native <dialog>, layout() in views.js) for
+// data-confirm-modal forms. form.submit() (not requestSubmit()) deliberately
+// bypasses the 'submit' event, otherwise this listener would catch itself.
 const confirmDialog = document.getElementById('confirm-dialog');
 if (confirmDialog) {
   const textEl = confirmDialog.querySelector('.confirm-dialog-text');
@@ -445,6 +467,7 @@ if (confirmDialog) {
 
   confirmDialog.querySelector('[data-dialog-confirm]').addEventListener('click', () => {
     confirmDialog.close();
+    window.snarLeaving = true; // form.submit() skips the 'submit' event (see guardUnsavedChanges)
     pendingForm?.submit();
     pendingForm = null;
   });
@@ -452,18 +475,25 @@ if (confirmDialog) {
     pendingForm = null;
     confirmDialog.close();
   });
-  // A click on the ::backdrop (outside the dialog content) also closes it.
+  // A click on the ::backdrop also closes it.
   confirmDialog.addEventListener('click', (e) => {
     if (e.target === confirmDialog) { pendingForm = null; confirmDialog.close(); }
   });
 }
 
-// Delete account (user management): the form stays fully usable without JS
-// (the server then transfers the links automatically to the admin
-// performing the action, see the fallback in server.js) – with JS, a modal
-// additionally asks who should take over the personal links instead.
-// pendingForm.submit() (not requestSubmit()) on confirm deliberately
-// bypasses the 'submit' event, same principle as the confirmation modal above.
+// "Weitere (n)" rows open a native <dialog> listing every entry
+// (splitBreakdownList() in views.js); Esc, focus trap and focus return come from <dialog>.
+document.querySelectorAll('[data-open-dialog]').forEach((btn) => {
+  btn.addEventListener('click', () => document.getElementById(btn.dataset.openDialog)?.showModal());
+});
+document.querySelectorAll('dialog.dist-dialog').forEach((dialog) => {
+  dialog.querySelector('[data-close-dialog]')?.addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+});
+
+// Delete account: works without JS (the server hands the links to the acting
+// admin, see server.js); with JS a modal asks who takes over instead.
+// pendingForm.submit() bypasses 'submit', same as the confirm modal above.
 const deleteUserDialog = document.getElementById('delete-user-dialog');
 if (deleteUserDialog) {
   const textEl = deleteUserDialog.querySelector('.confirm-dialog-text');
@@ -513,9 +543,8 @@ if (deleteUserDialog) {
   });
 }
 
-// Only enable the delete button once the slug has been typed exactly.
-// The button is deliberately NOT disabled in the HTML, so deleting still
-// works without JavaScript (then only the form's confirm() dialog applies).
+// Enable delete only once the slug is typed exactly. Not disabled in the HTML
+// so it still works without JS (then only confirm() applies).
 document.querySelectorAll('[data-confirm-slug]').forEach((input) => {
   const btn = input.closest('form')?.querySelector('button[type=submit]');
   if (!btn) return;
@@ -525,28 +554,30 @@ document.querySelectorAll('[data-confirm-slug]').forEach((input) => {
   });
 });
 
-// Mobile sidebar: below the sidebar breakpoint (see style.css) the same
-// sidebar markup becomes an off-canvas overlay instead of vanishing
-// entirely, opened via the "Mehr" tab in the bottom nav (Konto lives there
-// too, plus Admin-Einstellungen for members without their own direct link –
-// admins get a direct "Admin" link instead, see bottomNav() in views.js, so
-// they never open this overlay at all). Closes on a backdrop click or
-// Escape; a nav link click doesn't need its own handler – it's a full page
-// load, so the 'open' state never carries over anyway.
+// Mobile sidebar: below the breakpoint (style.css) it becomes an off-canvas
+// overlay opened via "Mehr" in the bottom nav (admins get a direct "Admin"
+// link instead, see bottomNav() in views.js). Nav link clicks need no handler:
+// a full page load resets 'open'.
 const menuToggle = document.getElementById('bottom-nav-more');
 const sidebar = document.getElementById('sidebar');
 const sidebarBackdrop = document.getElementById('sidebar-backdrop');
 if (sidebar) {
-  // Below the breakpoint, a closed sidebar is only moved off-screen
-  // (transform) – still fully focusable otherwise, so keyboard/screen-reader
-  // users would tab straight into invisible nav links. inert removes it from
-  // the tab order/AT tree whenever it's actually hidden (closed + mobile).
-  // Kept outside the menuToggle branch below: admins have no toggle button
-  // at all (their overlay can never be opened), but still need it inert
-  // while off-canvas.
+  // A closed sidebar is only moved off-screen and stays focusable; inert
+  // removes it from tab order/AT tree while hidden. Outside the menuToggle
+  // branch because admins have no toggle but still need it inert.
   const mobileNavQuery = window.matchMedia('(max-width: 760px)');
   const syncInert = () => { sidebar.inert = mobileNavQuery.matches && !sidebar.classList.contains('open'); };
-  mobileNavQuery.addEventListener('change', syncInert);
+  mobileNavQuery.addEventListener('change', () => {
+    // Resized past the breakpoint with the overlay open: close it, else the
+    // page stays scroll-locked behind the now permanent sidebar.
+    if (!mobileNavQuery.matches) {
+      sidebar.classList.remove('open');
+      sidebarBackdrop?.classList.remove('open');
+      document.body.classList.remove('sidebar-open-lock');
+      menuToggle?.setAttribute('aria-expanded', 'false');
+    }
+    syncInert();
+  });
   syncInert();
 
   if (menuToggle && sidebarBackdrop) {
@@ -573,8 +604,7 @@ if (sidebar) {
   }
 }
 
-// Profile dropdown: open/close via the trigger, close on a click outside
-// it or on a menu item.
+// Profile dropdown.
 const accountToggle = document.getElementById('account-menu-toggle');
 const accountMenu = document.getElementById('account-menu');
 if (accountToggle && accountMenu) {
@@ -590,13 +620,11 @@ if (accountToggle && accountMenu) {
   closeOnOutside(accountToggle.parentElement, closeAccountMenu);
 }
 
-// Link tables (dashboard, personal & org vault, user & domain management):
-// search + page size/prev-next, both client-side, no server request.
-// Pagination also works without a visible search box (e.g. the domains
-// list with showSearch:false, see searchTable() in views.js) – linksSearch
-// is therefore optional, not a prerequisite for the whole block. A single
-// shared render() function is the only place that sets row.style.display,
-// so search and pagination can't clobber each other.
+// Link tables (dashboard, vaults, user & domain management): client-side
+// search + pagination. linksSearch is optional: the domains list has no search
+// box (showSearch:false, see searchTable() in views.js). render() is the only
+// place that sets row.style.display, so search and pagination can't clobber
+// each other.
 const linksSearch = document.getElementById('links-search');
 const linkRows = [...document.querySelectorAll('.linktable tbody tr')];
 if (linkRows.length) {
@@ -605,11 +633,9 @@ if (linkRows.length) {
   const nextBtn = document.getElementById('links-next');
   const DEFAULT_PAGE_SIZE = Number(document.querySelector('.page-size-btn.active')?.dataset.pageSize) || 20;
 
-  // Initial state comes from the URL (?q=&page=&size=), so a reload or a
-  // shared link lands back on the same search/page instead of always
-  // resetting to the top – restored once here, kept in sync via
-  // history.replaceState() in render() below (no new history entry per
-  // keystroke, that would make the back button useless).
+  // Initial state from the URL (?q=&page=&size=) so reloads and shared links
+  // land on the same view; synced via replaceState() (a history entry per
+  // keystroke would make the back button useless).
   const initialParams = new URLSearchParams(location.search);
   let pageSize = Number(initialParams.get('size'));
   if (![10, 20, 50].includes(pageSize)) pageSize = DEFAULT_PAGE_SIZE;
@@ -657,9 +683,8 @@ if (linkRows.length) {
   render();
 }
 
-// "Erstellen" button: stays fully usable without JS (target-URL already
-// has `required`), but is additionally disabled via JS until a target URL
-// has been entered, with the reason in its title tooltip.
+// "Erstellen" button: usable without JS (target URL has `required`); with JS
+// disabled until a target URL is entered, reason in the title.
 const createBtn = document.getElementById('create-btn');
 const targetInput = document.getElementById('target');
 if (createBtn && targetInput) {
@@ -672,66 +697,51 @@ if (createBtn && targetInput) {
   syncCreateState();
 }
 
-// Stats time-range chips (detail page): redraws the clicks chart on
-// switching, without a server request – the values for all four ranges
-// already arrive on the first page load (data-ranges). The path math
-// matches chartGeometry() in views.js 1:1 (used there for the no-JS render).
+// Stats range chips: redraw the chart client-side (all ranges arrive with the
+// page, data-ranges). Path math and markup come from public/chart-shared.js,
+// which the server also uses for the initial chart (views.js), so both match.
 const rangeGroup = document.getElementById('stats-range-group');
 if (rangeGroup) {
+  const Chart = window.SnarChart;
   const ranges = JSON.parse(rangeGroup.dataset.ranges);
-  const numberFormat = new Intl.NumberFormat('de-DE');
-  const CHART_W = 800, CHART_TOP = 15, CHART_BASE = 185;
+  const fmt = new Intl.NumberFormat('de-DE').format;
+  const chartWrap = document.getElementById('stats-chart');
   const areaPath = document.getElementById('chart-area');
   const linePath = document.getElementById('chart-line');
+  const partialLinePath = document.getElementById('chart-line-partial');
   const hoverGroup = document.getElementById('chart-hover-group');
-  const labelMax = document.getElementById('chart-label-max');
-  const labelMid = document.getElementById('chart-label-mid');
+  const chartSvg = document.getElementById('chart-svg');
+  const gridGroup = document.getElementById('chart-grid');
+  const yLabels = document.getElementById('chart-y-labels');
   const xLabels = document.getElementById('chart-x-labels');
-  const totalRange = document.getElementById('stat-total-range');
-  const rangeLabel = document.getElementById('stat-range-label');
+
+  // <details> doesn't close on an outside click; give the custom-range panel
+  // the same closeOnOutside() behavior as the other popovers.
+  const rangeCustomDetails = rangeGroup.querySelector('.range-custom-details');
+  if (rangeCustomDetails) {
+    closeOnOutside(rangeCustomDetails, () => { rangeCustomDetails.open = false; });
+  }
 
   function renderRange(key) {
     const r = ranges[key];
-    // max = the real highest value for the label (can be 0), denom = pure
-    // division safeguard – see chartGeometry() in views.js.
-    const max = Math.max(...r.values, 0);
-    const denom = max || 1;
-    const n = r.values.length;
-    const points = r.values.map((v, i) => ({
-      x: n > 1 ? (i / (n - 1)) * CHART_W : CHART_W / 2,
-      y: CHART_BASE - (v / denom) * (CHART_BASE - CHART_TOP),
-    }));
-    const line = 'M' + points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' L');
-    areaPath.setAttribute('d', `${line} L${CHART_W},${CHART_BASE} L0,${CHART_BASE} Z`);
-    linePath.setAttribute('d', line);
-    labelMax.textContent = numberFormat.format(max);
-    labelMid.textContent = numberFormat.format(Math.floor(max / 2)); // see chartGeometry() in views.js
-    // Positioned at the real index instead of evenly spread – see xLabelsHtml() in views.js.
-    xLabels.innerHTML = r.labels.map(({ i, text }) => {
-      const pct = n > 1 ? (i / (n - 1)) * 100 : 50;
-      return `<span style="left:${pct.toFixed(2)}%">${text}</span>`;
-    }).join('');
-    totalRange.textContent = numberFormat.format(r.total);
-    rangeLabel.textContent = r.label;
-
-    // Rebuild the hover areas – see chartHoverBands() in views.js. The
-    // actual tooltip display runs via event delegation (below), so it
-    // reads the data attributes independently of when/how often this gets
-    // rebuilt.
-    const spacing = n > 1 ? CHART_W / (n - 1) : CHART_W;
-    hoverGroup.innerHTML = points.map((p, i) => {
-      const left = Math.max(0, p.x - spacing / 2);
-      const right = Math.min(CHART_W, p.x + spacing / 2);
-      const label = r.pointLabels?.[i] ?? '';
-      return `<rect class="chart-hover" x="${left.toFixed(1)}" y="0" width="${(right - left).toFixed(1)}" height="190" fill="transparent" data-label="${label}" data-value="${r.values[i]}" data-px="${p.x.toFixed(1)}" data-py="${p.y.toFixed(1)}"/>`;
-    }).join('');
+    const g = Chart.chartGeometry(r.values, r.partialLast);
+    areaPath.setAttribute('d', g.areaPath);
+    linePath.setAttribute('d', g.linePath);
+    partialLinePath.setAttribute('d', g.partialPath);
+    const grid = Chart.gridHtml(g.ticks, fmt);
+    gridGroup.innerHTML = grid.lines;
+    yLabels.innerHTML = grid.labels;
+    const axisW = `${Chart.axisWidthPx(g.ticks.map((t) => fmt(t.value)))}px`;
+    chartWrap.style.setProperty('--axis-w', axisW);
+    xLabels.style.setProperty('--axis-w', axisW);
+    chartSvg.setAttribute('aria-label', Chart.chartSummary(r.label, r.total, r.values, r.pointLabels, fmt));
+    xLabels.innerHTML = Chart.xLabelsHtml(r.labels, r.values.length);
+    // The tooltip uses event delegation (below), so rebuilding the bands is safe.
+    hoverGroup.innerHTML = Chart.hoverBandsHtml(g.points, r.values, r.pointLabels);
   }
 
-  // Custom tooltip instead of the native <title>: follows the exact point
-  // position on the curve (SVG coordinate -> screen via getScreenCTM, so
-  // it's still correct with preserveAspectRatio="none"/responsive scaling).
-  const chartSvg = document.getElementById('chart-svg');
-  const chartWrap = document.getElementById('stats-chart');
+  // Custom tooltip instead of native <title>: follows the exact curve point
+  // (SVG -> screen via getScreenCTM, correct under preserveAspectRatio="none").
   const tooltip = document.getElementById('chart-tooltip');
   const tooltipTitle = document.getElementById('chart-tooltip-title');
   const tooltipValue = document.getElementById('chart-tooltip-value');
@@ -739,9 +749,8 @@ if (rangeGroup) {
 
   function showTooltip(hoverRect) {
     const px = Number(hoverRect.dataset.px), py = Number(hoverRect.dataset.py);
-    // SVG point -> screen coordinate (not drawn as an SVG <circle>:
-    // preserveAspectRatio="none" scales x/y by different amounts, which
-    // would turn a circle into an ellipse. A regular HTML element avoids that.
+    // The hover dot is an HTML element, not an SVG <circle>: preserveAspectRatio="none"
+    // scales x/y differently and would turn a circle into an ellipse.
     const screenPt = new DOMPoint(px, py).matrixTransform(chartSvg.getScreenCTM());
     const wrapRect = chartWrap.getBoundingClientRect();
     const left = screenPt.x - wrapRect.left, top = screenPt.y - wrapRect.top;
@@ -756,6 +765,37 @@ if (rangeGroup) {
   }
   function hideTooltip() { tooltip.classList.remove('visible'); hoverDot.classList.remove('visible'); }
 
+  // Keyboard access: the chart is focusable, arrow keys walk through the points
+  // (same tooltip as on hover) and a live region announces the value.
+  chartWrap.tabIndex = 0;
+  chartWrap.setAttribute('role', 'group');
+  chartWrap.setAttribute('aria-label', 'Klickverlauf: mit Pfeiltasten einzelne Werte durchgehen');
+  const chartAnnouncer = document.createElement('span');
+  chartAnnouncer.className = 'sr-only';
+  chartAnnouncer.setAttribute('aria-live', 'polite');
+  chartWrap.appendChild(chartAnnouncer);
+  let activePoint = -1;
+  function stepPoint(next) {
+    const bands = hoverGroup.querySelectorAll('.chart-hover');
+    if (!bands.length) return;
+    activePoint = Math.max(0, Math.min(bands.length - 1, next));
+    const band = bands[activePoint];
+    showTooltip(band);
+    chartAnnouncer.textContent = `${band.dataset.label}: ${band.dataset.value} ${band.dataset.value === '1' ? 'Klick' : 'Klicks'}`;
+  }
+  chartWrap.addEventListener('keydown', (e) => {
+    const count = hoverGroup.querySelectorAll('.chart-hover').length;
+    const last = count - 1;
+    if (e.key === 'ArrowRight') stepPoint(activePoint < 0 ? last : activePoint + 1);
+    else if (e.key === 'ArrowLeft') stepPoint(activePoint < 0 ? last : activePoint - 1);
+    else if (e.key === 'Home') stepPoint(0);
+    else if (e.key === 'End') stepPoint(last);
+    else if (e.key === 'Escape') { activePoint = -1; hideTooltip(); return; }
+    else return;
+    e.preventDefault();
+  });
+  chartWrap.addEventListener('blur', () => { activePoint = -1; hideTooltip(); });
+
   hoverGroup.addEventListener('mousemove', (e) => {
     const hoverRect = e.target.closest('.chart-hover');
     if (hoverRect) showTooltip(hoverRect); else hideTooltip();
@@ -764,19 +804,23 @@ if (rangeGroup) {
 
   rangeGroup.querySelectorAll('.range-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
-      rangeGroup.querySelectorAll('.range-btn').forEach((b) => b.classList.toggle('active', b === btn));
+      // The custom-range trigger (a <summary>, statsChart() in views.js) only
+      // has data-range once a range was picked; before that it just opens the
+      // <details> and must not touch the chart or the chips.
+      if (!btn.dataset.range || !(btn.dataset.range in ranges)) return;
+      rangeGroup.querySelectorAll('.range-btn').forEach((b) => {
+        b.classList.toggle('active', b === btn);
+        if (b.hasAttribute('aria-pressed')) b.setAttribute('aria-pressed', String(b === btn));
+      });
       renderRange(btn.dataset.range);
+      activePoint = -1;
       hideTooltip(); // positions still belong to the old range until the mouse moves again
     });
   });
 }
 
-// Move focus to a validation error on load. Prefers the specific invalid
-// field (dashboard/linkDetail/usersPage/domainsPage – see views.js) so
-// keyboard/screen-reader users land exactly where the fix is needed; falls
-// back to the generic .flash.error banner (login, static QR generator, or
-// the redirect toast from flashRedirect in server.js) when no field is
-// singled out.
+// Focus a validation error on load: the specific invalid field if any, else
+// the generic .flash.error banner (login, QR generator, flashRedirect toast).
 const invalidField = document.querySelector('input.invalid, textarea.invalid');
 if (invalidField) {
   invalidField.focus();
@@ -789,10 +833,17 @@ if (invalidField) {
 }
 
 // Warn before leaving a form with unsaved changes (link edit + password
-// change – the two places where navigating away actually loses meaningful
-// input, unlike the empty "create" forms elsewhere). Compares serialized
-// form state at load vs. right before unload; the submitting flag avoids
-// warning on the form's own submit navigation.
+// change): compares serialized state at load vs. unload; `submitting` avoids
+// warning on the form's own submit.
+//
+// snarLeaving covers leaving on purpose via another POST form (delete, logout …),
+// set by the document listener below and by the confirm-modal path
+// (form.submit()). GET forms (custom date range) are excluded on purpose:
+// they'd drop unsaved edits unintentionally.
+window.snarLeaving = false;
+document.addEventListener('submit', (e) => {
+  if (!e.defaultPrevented && e.target.method === 'post') window.snarLeaving = true;
+});
 function guardUnsavedChanges(form) {
   if (!form) return;
   const snapshot = () => new URLSearchParams(new FormData(form)).toString();
@@ -800,7 +851,7 @@ function guardUnsavedChanges(form) {
   let submitting = false;
   form.addEventListener('submit', () => { submitting = true; });
   window.addEventListener('beforeunload', (e) => {
-    if (submitting || snapshot() === initial) return;
+    if (submitting || window.snarLeaving || snapshot() === initial) return;
     e.preventDefault();
     e.returnValue = '';
   });

@@ -5,11 +5,10 @@ const path = require('path');
 const dns = require('dns');
 const net = require('net');
 const QRCode = require('qrcode');
-// ESM-only package – as of Node 20.19/22.12, require() can load ESM
-// directly (see package.json "engines"), no dynamic import() needed.
+// ESM-only; require() works from Node 20.19/22.12 (see package.json "engines").
 const oidc = require('openid-client');
 
-const { stmts, createLink, getSessionSecret, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty } = require('./db');
+const { stmts, deleteUserAndReassign, createLink, getSessionSecret, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty } = require('./db');
 const views = require('./views');
 const { isExpired } = views;
 
@@ -18,8 +17,7 @@ const PORT = Number(process.env.PORT || 3000);
 // Same rule as when creating an account via /app/users – applies to the bootstrap too.
 const USERNAME_RE = /^[A-Za-z0-9\-_.]{2,32}$/;
 
-// On the very first start, an admin account is created from the env
-// variables. After that, user management runs entirely inside the app.
+// First start only: admin account from env; afterwards users are managed in-app.
 if (stmts.countUsers.get().n === 0) {
   const pw = process.env.ADMIN_PASSWORD;
   const name = (process.env.ADMIN_USER || 'admin').trim();
@@ -35,8 +33,7 @@ if (stmts.countUsers.get().n === 0) {
   console.log(`Admin-Konto "${name}" angelegt. Passwort nach dem ersten Login unter /app/account ändern.`);
 }
 
-// DOMAINS/BASE_URL only take effect on the very first start as the initial
-// domain list (like ADMIN_PASSWORD) – after that, everything runs via /app/domains.
+// DOMAINS/BASE_URL seed the domain list on first start only; afterwards /app/domains.
 seedDomainsIfEmpty(
   (process.env.DOMAINS || process.env.BASE_URL || '').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean)
 );
@@ -44,18 +41,12 @@ seedDomainsIfEmpty(
 const SECRET = getSessionSecret();
 const RESERVED = new Set(['app', 'login', 'logout', 'static', 'favicon.ico', 'robots.txt', 'healthz']);
 
-// Random per-process value, not a secret (never guards anything, just an
-// identifier) – lets the "Domain testen"-check (POST .../check-reachability
-// below) tell "some server answered on this domain" apart from "this
-// specific snar instance answered on this domain", e.g. a parked domain or
-// unrelated website would otherwise look reachable.
+// Random per-process id (not a secret): lets "Domain testen" tell this snar instance
+// apart from any other server answering on the domain.
 const INSTANCE_TOKEN = crypto.randomBytes(16).toString('hex');
 
-// Well-formed "salt:hash" so verifyPassword() always runs the real (slow)
-// scrypt computation, even for a username that doesn't exist – otherwise
-// POST /login returns near-instantly for unknown usernames but only after
-// scrypt for known ones, letting an attacker enumerate valid usernames purely
-// from response timing despite the identical error message.
+// Well-formed hash so unknown usernames also pay the scrypt cost; otherwise POST /login
+// timing reveals which usernames exist.
 const DUMMY_PASSWORD_HASH = hashPassword(crypto.randomBytes(16).toString('hex'));
 
 function getDomains() {
@@ -63,11 +54,8 @@ function getDomains() {
 }
 
 // ---------------------------------------------------------------------------
-// SSO (OIDC, e.g. Authentik) – an additional login path alongside username/
-// password, not a replacement. Active as soon as all three variables are
-// set, making a separate enable flag unnecessary. Discovery runs lazily on
-// the first login attempt rather than at server startup, so a briefly
-// unreachable identity provider doesn't block the whole snar startup.
+// SSO (OIDC, e.g. Authentik) – additional login path, active once all three env vars are set.
+// Discovery is lazy so an unreachable identity provider does not block startup.
 // ---------------------------------------------------------------------------
 const OIDC_ENABLED = !!(process.env.OIDC_ISSUER_URL && process.env.OIDC_CLIENT_ID && process.env.OIDC_CLIENT_SECRET);
 let oidcConfigPromise = null;
@@ -80,9 +68,7 @@ function getOidcConfig() {
   return oidcConfigPromise;
 }
 
-// Pin links without an explicit domain (legacy data or single-domain setups)
-// to the first configured domain, so the display never has to show an empty
-// domain.
+// Pin domainless links (legacy data, single-domain setups) to the first configured domain.
 {
   const domains = getDomains();
   if (domains.length) stmts.backfillDomain.run(domains[0]);
@@ -95,29 +81,15 @@ function normalizeDomain(input) {
 
 const app = express();
 app.disable('x-powered-by');
-// Named ranges instead of true (same defaults as Immich's reverse-proxy
-// setup): trusts X-Forwarded-* headers from loopback plus private/
-// link-local addresses, which covers both a same-host proxy and a reverse
-// proxy running as another container in the same Docker network (its
-// gateway IP, e.g. 172.17.0.1, falls under "uniquelocal") – no extra
-// config needed for the common cases. TRUSTED_PROXIES (comma-separated
-// IPs/CIDRs) can extend this for a proxy reachable only via a public
-// address (see README, "Reverse Proxy"). "true" would let ANY client
-// freely spoof req.ip via a self-set X-Forwarded-For header – that made
-// the IP-based login rate limiter below trivial to bypass (every attempt =
-// a new "IP" = a new counter) – so never fall back to a blanket "true".
+// Named ranges, not `true`: `true` lets any client spoof req.ip via X-Forwarded-For and bypass
+// the login rate limiter. Covers same-host and Docker-network proxies; TRUSTED_PROXIES
+// (IPs/CIDRs) extends it for a proxy on a public address (README, "Reverse Proxy").
 const TRUSTED_PROXIES = process.env.TRUSTED_PROXIES
   ? process.env.TRUSTED_PROXIES.split(',').map(s => s.trim()).filter(Boolean)
   : [];
 app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal', ...TRUSTED_PROXIES]);
-// Security headers (pentest recommendation). style-src allows
-// 'unsafe-inline' because views.js uses style="..." attributes in many
-// places for small layout details (no <script> equivalent, can't execute
-// JS) – script-src, by contrast, stays strictly 'self': the only <script>
-// tag in the entire output is the external app.js include, no inline JS
-// anywhere. img-src additionally allows data: because style.css uses the
-// dropdown-arrow icon as an embedded data:image/svg+xml (no external
-// request, no meaningful risk).
+// Security headers. style-src needs 'unsafe-inline' for style="..." attributes in views.js;
+// script-src stays 'self' (no inline JS anywhere). img-src data: for the dropdown-arrow SVG in style.css.
 app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:");
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -125,15 +97,9 @@ app.use((req, res, next) => {
 });
 app.use(compression());
 app.use(express.urlencoded({ extended: false }));
-// Long maxAge + immutable: CSS_URL/APP_JS_URL (and, via CSS_CONTENT, the
-// font URL referenced in the CSS too) already carry a content hash in the
-// query string (?v=...) – if a file changes, the URL changes, and the
-// browser is forced to reload. The old URL forever stays exactly the same
-// content, so it can safely be cached without limit.
+// Long cache + immutable: asset URLs carry a content hash (?v=...), so a changed file gets a new URL.
 const STATIC_CACHE = { maxAge: '1y', immutable: true };
-// Dedicated route instead of express.static: serves CSS_CONTENT (font
-// placeholder already replaced with the real hash, see views.js) instead of
-// the raw file.
+// Dedicated route: serves CSS_CONTENT (font hash already substituted, see views.js), not the raw file.
 app.get('/static/style.css', (req, res) => {
   res.type('text/css').set('Cache-Control', 'public, max-age=31536000, immutable').send(views.CSS_CONTENT);
 });
@@ -148,32 +114,28 @@ function sign(value) {
 
 function makeSessionCookie(userId, tokenVersion) {
   const exp = Date.now() + 1000 * 60 * 60 * 24 * 30; // 30 days
-  // token_version makes the signature password-dependent: it's incremented
-  // on password change, which invalidates every previously issued cookie.
+  // token_version ties the signature to the password state; bumping it invalidates all issued cookies.
   const payload = `u.${userId}.${tokenVersion}.${exp}`;
   return `${payload}.${sign(payload)}`;
 }
 
-// Set the cookie (login + after a password change, for the current device).
-// Secure flag only over TLS (req.secure knows about the reverse proxy via trust proxy).
+// Login + after a password change. Secure only over TLS (req.secure honors trust proxy).
 function setSessionCookie(res, req, user) {
   res.setHeader('Set-Cookie',
     `snar_session=${makeSessionCookie(user.id, user.token_version)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${60 * 60 * 24 * 30}${req.secure ? '; Secure' : ''}`);
 }
 
-// Splits "<payload>.<sig>" on the last dot and returns payload only if sig
-// is a valid HMAC over it (constant-time compare) – shared by sessionUser()
-// and verifyOidcState() below, which otherwise duplicated this exact
-// signature-checking logic; that's the wrong place for two copies to drift.
+// Returns the payload if the HMAC signature is valid (constant-time); shared by sessionUser and verifyOidcState.
 function verifySigned(token) {
   if (!token) return null;
   const i = token.lastIndexOf('.');
   if (i < 0) return null;
   const payload = token.slice(0, i);
-  const sig = token.slice(i + 1);
-  const expected = sign(payload);
+  const sig = Buffer.from(token.slice(i + 1));
+  const expected = Buffer.from(sign(payload));
+  // Compare byte lengths: a multibyte sig of equal string length would make timingSafeEqual throw.
   if (sig.length !== expected.length) return null;
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
+  if (!crypto.timingSafeEqual(sig, expected)) return null;
   return payload;
 }
 
@@ -191,15 +153,15 @@ function getCookie(req, name) {
   const raw = req.headers.cookie || '';
   for (const part of raw.split(';')) {
     const [k, ...v] = part.trim().split('=');
-    if (k === name) return decodeURIComponent(v.join('='));
+    if (k === name) {
+      // Malformed escape makes decodeURIComponent throw – treat as missing cookie, not a 500.
+      try { return decodeURIComponent(v.join('=')); } catch { return null; }
+    }
   }
   return null;
 }
 
-// Short-lived signed cookie for the OIDC round trip (the PKCE verifier +
-// state + nonce need to survive between /login/sso and
-// /login/sso/callback) – same HMAC principle as sign()/makeSessionCookie()
-// above, just with its own content instead of user ID/expiry.
+// Short-lived signed cookie carrying PKCE verifier/state/nonce across the OIDC round trip.
 function signOidcState(payload) {
   const json = Buffer.from(JSON.stringify(payload)).toString('base64url');
   return `${json}.${sign(json)}`;
@@ -222,12 +184,9 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Simple login rate limit (in-memory, per key). Only counts FAILED
-// attempts – otherwise multiple users behind the same NAT would lock each
-// other out even though nobody is guessing a password. The key is either
-// "ip:..." or "user:..." (see POST /login) – this slows an attack down both
-// on IP rotation (via the username key) and on username enumeration from a
-// fixed IP (via the IP key).
+// Login rate limit (in-memory). Counts only FAILED attempts so users behind one NAT do not lock
+// each other out. Keys "ip:..." and "user:..." (see POST /login) cover username enumeration
+// from one IP as well as IP rotation.
 const loginAttempts = new Map();
 function rateLimited(key) {
   const entry = loginAttempts.get(key);
@@ -237,8 +196,7 @@ function rateLimited(key) {
 }
 function noteFailedLogin(key) {
   const now = Date.now();
-  // Expired entries would otherwise only get cleaned up when the same key
-  // comes back – with many (possibly spoofed) IPs the map would grow unbounded.
+  // Purge expired entries, or many (spoofed) IPs would grow the map unbounded.
   if (loginAttempts.size >= 1000) {
     for (const [k, e] of loginAttempts) if (now > e.reset) loginAttempts.delete(k);
   }
@@ -248,17 +206,13 @@ function noteFailedLogin(key) {
   loginAttempts.set(key, entry);
 }
 
-// Domain for a link: its own domain, otherwise the first configured one,
-// otherwise (no domain on record) the address of the current request.
+// Own domain, else first configured, else the current request host.
 function originFor(link, req) {
   return (link && link.domain) || getDomains()[0] || `${req.protocol}://${req.get('host')}`;
 }
 
-// Which sidebar item gets marked active when the detail page is opened –
-// derived from the referer, so "← Zurück" (JS, real history) and the
-// sidebar highlight (server render) agree on the same origin. Without a
-// matching referer (direct visit, external link), "dashboard" stays the
-// unobtrusive default.
+// Active sidebar item for the detail page, derived from the referer so it matches "← Zurück";
+// "dashboard" is the fallback.
 function pageFromReferer(req) {
   const ref = req.get('referer') || '';
   if (ref.includes('/app/user-vault')) return 'myvault';
@@ -271,7 +225,8 @@ function shortUrl(link, req) {
 }
 
 function parseUA(ua = '') {
-  const device = /ipad|tablet/i.test(ua) ? 'Tablet'
+  // Android phones say "Mobile", tablets do not – else tablets would count as phones.
+  const device = /ipad|tablet/i.test(ua) || (/android/i.test(ua) && !/mobile/i.test(ua)) ? 'Tablet'
     : /mobi|iphone|android/i.test(ua) ? 'Mobil'
     : 'Desktop';
   let browser = 'Sonstige';
@@ -295,43 +250,52 @@ function isHttpUrl(u) {
   } catch { return false; }
 }
 
-// Time-range stats for the detail page's four chip views (day/week/month/
-// year). Each returns a gap-free values array (no missing hours/days/
-// months) plus a handful of axis labels.
-// Bucketing happens in server local time (SQL side: 'localtime', see
-// db.js) – the date arrays here therefore also have to compute locally
-// (getDate instead of getUTCDate), or the keys and buckets would drift
-// apart.
-// Sparse axis labeling: only every `step`-th point plus always the last one
-// – carries the real array index `i` along, so the label sits at the
-// actual data-point position when rendered (not evenly spread across the
-// width, which would misalign a "forced" last label with irregular spacing
-// from the real last point).
-function sparseLabels(dates, step, formatFn) {
+// Time-range stats for the detail page. Each returns a gap-free values array plus sparse axis labels.
+// Bucketing is in server local time (SQL 'localtime', see db.js), so date arrays use local getters too.
+// sparseLabels: every step-th point plus (unless forceLast=false) the last; i keeps the real index for
+// positioning. forceLast=false only for statsRangeHourly: n=24/step=4 would skew the last gap to 3.
+function sparseLabels(dates, step, formatFn, forceLast = true) {
   const n = dates.length;
   const out = [];
   dates.forEach((d, i) => {
-    if (i % step === 0 || i === n - 1) out.push({ i, text: formatFn(d) });
+    if (i % step === 0) out.push({ i, text: formatFn(d) });
   });
+  if (forceLast && n > 0 && out[out.length - 1]?.i !== n - 1) {
+    // A forced last label right next to the previous one would overprint it: the last wins.
+    const gap = out.length ? n - 1 - out[out.length - 1].i : Infinity;
+    if (gap <= Math.floor(step / 2)) out.pop();
+    out.push({ i: n - 1, text: formatFn(dates[n - 1]) });
+  }
   return out;
 }
 
 const pad2 = (n) => String(n).padStart(2, '0');
+
+// "20. Aug" on the first day and at month changes, else "25." Stateful: call in axis order.
+function dayMonthFormatter() {
+  let lastMonth = null;
+  return (d) => {
+    const text = d.getMonth() !== lastMonth
+      ? `${d.getDate()}. ${d.toLocaleDateString('de-DE', { month: 'short' })}`
+      : `${d.getDate()}.`;
+    lastMonth = d.getMonth();
+    return text;
+  };
+}
 
 function statsRangeHourly(linkId) {
   const rows = stmts.clicksPerHourToday.all(linkId);
   const map = new Map(rows.map(r => [Number(r.hour), r.n]));
   const values = Array.from({ length: 24 }, (_, h) => map.get(h) || 0);
   const hours = Array.from({ length: 24 }, (_, h) => h);
-  const labels = sparseLabels(hours, 3, h => String(h));
-  if (labels.length) labels[labels.length - 1].text += ' Uhr'; // the real last point gets context
-  // Full per-hour labeling (not thinned out) for the hover tooltip.
+  const labels = sparseLabels(hours, 4, h => String(h), false);
+  if (labels.length) labels[labels.length - 1].text += ' Uhr'; // the last shown point gets context
+  // Unthinned labels for the hover tooltip.
   const pointLabels = Array.from({ length: 24 }, (_, h) => `${pad2(h)}:00 Uhr`);
   return { label: 'heute', values, labels, pointLabels };
 }
 
 function statsRangeDaily(linkId, days) {
-  // Window is day-precise: today + the (days-1) days before it
   const rows = stmts.clicksPerDay.all(linkId, `-${days - 1} days`);
   const map = new Map(rows.map(r => [r.day, r.n]));
   const dates = [];
@@ -343,18 +307,15 @@ function statsRangeDaily(linkId, days) {
   }
   const values = dates.map(d => map.get(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`) || 0);
   const weekly = days <= 7;
+  const dayMonth = dayMonthFormatter();
   const labels = sparseLabels(dates, weekly ? 1 : 5,
-    d => weekly ? d.toLocaleDateString('de-DE', { weekday: 'short' }) : `${d.getDate()}.`);
-  // Full date per day (not thinned out) for the hover tooltip.
+    d => weekly ? d.toLocaleDateString('de-DE', { weekday: 'short' }) : dayMonth(d));
   const pointLabels = dates.map(d => d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }));
   return { label: weekly ? 'letzte 7 Tage' : 'letzte 30 Tage', values, labels, pointLabels };
 }
 
-// label/step/formatFn are parameterized so statsRangeAll() (well over 12
-// months possible) can reuse the same bucketing logic without disturbing
-// "Jahr"'s fixed axis labeling (step=2, short month name only).
+// label/step/formatFn are parameters so statsRangeAll() can reuse this for more than 12 months.
 function statsRangeMonthly(linkId, months, { label = 'letzte 12 Monate', step = 2, formatFn } = {}) {
-  // Window is month-precise: the current month + the (months-1) before it
   const rows = stmts.clicksPerMonth.all(linkId, `-${months - 1} months`);
   const map = new Map(rows.map(r => [r.month, r.n]));
   const dates = [];
@@ -364,16 +325,14 @@ function statsRangeMonthly(linkId, months, { label = 'letzte 12 Monate', step = 
   }
   const values = dates.map(d => map.get(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}`) || 0);
   const labels = sparseLabels(dates, step, formatFn || (d => d.toLocaleDateString('de-DE', { month: 'short' })));
-  // Full month name per month (not thinned out) for the hover tooltip.
   const pointLabels = dates.map(d => d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }));
-  return { label, values, labels, pointLabels };
+  // The last bucket is the running month: chart draws it dashed, tooltip says "(bisher)".
+  pointLabels[pointLabels.length - 1] += ' (bisher)';
+  return { label, values, labels, pointLabels, partialLast: true };
 }
 
-// "Gesamt": month-by-month across the entire lifetime since creation, not
-// just the last 12 months. The axis step scales with the lifetime (target
-// ~6 visible labels), and once the lifetime exceeds a year, every label
-// also carries the year – otherwise e.g. several "Jan"s would repeat with
-// no visible year change.
+// "Gesamt": monthly over the whole lifetime, ~6 labels; with the year once lifetime > 1 year
+// (else repeated "Jan"s look identical).
 function statsRangeAll(linkId, createdAt) {
   const created = new Date(createdAt.replace(' ', 'T') + 'Z');
   const today = new Date();
@@ -385,43 +344,118 @@ function statsRangeAll(linkId, createdAt) {
   return statsRangeMonthly(linkId, months, { label: 'gesamte Laufzeit', step, formatFn });
 }
 
-function linkStatsRanges(linkId, createdAt) {
+// "YYYY-MM-DD" + n days as plain calendar arithmetic (UTC anchor, no timezone involved).
+function addDaysStr(dateStr, n) {
+  const d = new Date(dateStr + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+// Bounded to 2000..2100: statsRangeCustom builds one bucket per day/month, so huge spans
+// would mean a multi-MB page.
+function isValidDateStr(s) {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  if (s < '2000-01-01' || s > '2100-12-31') return false;
+  const d = new Date(s + 'T00:00:00Z');
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
+// User-picked inclusive [from, to], validated/ordered by renderLinkDetail(). Granularity scales
+// with the span (hourly, daily, monthly) like the fixed presets.
+function statsRangeCustom(linkId, fromStr, toStr) {
+  const toExclusive = addDaysStr(toStr, 1);
+  const spanDays = Math.round((new Date(toExclusive + 'T00:00:00Z') - new Date(fromStr + 'T00:00:00Z')) / 86400000);
+  const fmtFull = (s) => new Date(s + 'T00:00:00Z').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
+  const label = fromStr === toStr ? fmtFull(fromStr) : `${fmtFull(fromStr)} – ${fmtFull(toStr)}`;
+
+  if (spanDays <= 3) {
+    const rows = stmts.clicksPerHourInRange.all(linkId, fromStr, toExclusive);
+    const map = new Map(rows.map(r => [r.bucket, r.n]));
+    const hourKey = (dt) => `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())} ${pad2(dt.getHours())}`;
+    const hours = [];
+    const seen = new Set();
+    for (let i = 0; i < spanDays; i++) {
+      const [y, m, d] = addDaysStr(fromStr, i).split('-').map(Number);
+      for (let h = 0; h < 24; h++) {
+        const dt = new Date(y, m - 1, d, h);
+        // Spring-forward day: hour 02 rolls over to 03:00 and would count twice – skip repeats.
+        if (seen.has(hourKey(dt))) continue;
+        seen.add(hourKey(dt));
+        hours.push(dt);
+      }
+    }
+    const values = hours.map(dt => map.get(hourKey(dt)) || 0);
+    const labels = sparseLabels(hours, Math.max(1, Math.round(hours.length / 8)), dt => `${pad2(dt.getHours())}:00`);
+    const pointLabels = hours.map(dt => `${dt.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} ${pad2(dt.getHours())}:00 Uhr`);
+    return { label, values, labels, pointLabels };
+  }
+
+  if (spanDays <= 92) {
+    const days = Array.from({ length: spanDays }, (_, i) => {
+      const [y, m, d] = addDaysStr(fromStr, i).split('-').map(Number);
+      return new Date(y, m - 1, d);
+    });
+    const rows = stmts.clicksPerDayInRange.all(linkId, fromStr, toExclusive);
+    const map = new Map(rows.map(r => [r.day, r.n]));
+    const values = days.map(d => map.get(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`) || 0);
+    const step = spanDays <= 7 ? 1 : Math.max(1, Math.round(spanDays / 6));
+    const dayMonth = dayMonthFormatter();
+    const labels = sparseLabels(days, step, d => dayMonth(d));
+    const pointLabels = days.map(d => d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }));
+    return { label, values, labels, pointLabels };
+  }
+
+  // Beyond ~3 months: monthly buckets, same shape as statsRangeMonthly/-All.
+  const [fy, fm] = fromStr.split('-').map(Number);
+  const [ty, tm] = toStr.split('-').map(Number);
+  const monthCount = (ty - fy) * 12 + (tm - fm) + 1;
+  const months = Array.from({ length: monthCount }, (_, i) => {
+    const total = (fm - 1) + i;
+    return new Date(fy + Math.floor(total / 12), total % 12, 1);
+  });
+  const rows = stmts.clicksPerMonthInRange.all(linkId, fromStr, toExclusive);
+  const map = new Map(rows.map(r => [r.month, r.n]));
+  const values = months.map(d => map.get(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}`) || 0);
+  const step = Math.max(1, Math.round(monthCount / 6));
+  const formatFn = d => d.toLocaleDateString('de-DE', monthCount > 12 ? { month: 'short', year: '2-digit' } : { month: 'short' });
+  const labels = sparseLabels(months, step, formatFn);
+  const pointLabels = months.map(d => d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }));
+  const now = new Date();
+  const partialLast = ty === now.getFullYear() && tm === now.getMonth() + 1;
+  if (partialLast) pointLabels[pointLabels.length - 1] += ' (bisher)';
+  return { label, values, labels, pointLabels, partialLast };
+}
+
+function linkStatsRanges(linkId, createdAt, custom) {
   const ranges = {
     tag: statsRangeHourly(linkId),
     woche: statsRangeDaily(linkId, 7),
     monat: statsRangeDaily(linkId, 30),
-    jahr: statsRangeMonthly(linkId, 12),
+    // step: 1 – only 12 points, so show every month.
+    jahr: statsRangeMonthly(linkId, 12, { step: 1 }),
     gesamt: statsRangeAll(linkId, createdAt),
   };
+  if (custom) ranges.custom = statsRangeCustom(linkId, custom.from, custom.to);
   for (const r of Object.values(ranges)) r.total = r.values.reduce((a, b) => a + b, 0);
   return ranges;
 }
 
-// Org links belong to the whole team: any logged-in member may view/edit
-// them, not just the owner/admin – "Erstellt von" stays purely informational.
-// Private links stay reserved for owner/admin. Changing visibility and
-// deleting are scoped more narrowly, see isOwnerOrAdmin.
+// Org links belong to the whole team: any logged-in member may view/edit them.
+// Private links: owner/admin only. Visibility change and delete are narrower, see isOwnerOrAdmin.
 function canManage(user, link) {
   return user.role === 'admin' || link.owner_id === user.id || link.visibility === 'org';
 }
 
-// canManage() isn't enough for changing visibility or deleting: both stay
-// reserved for owner/admin, not the whole org membership. Otherwise a
-// member could lock themselves out by switching to "Persönlich"
-// (canManage() only grants non-owners access as long as visibility stays
-// 'org'), and deleting is irreversible (click data gone, printed QR codes
-// dead instantly) and affects the whole team.
+// Visibility change and delete stay owner/admin only: otherwise a member could lock themselves
+// out via "Persönlich" (canManage() only grants non-owners access while visibility is 'org'),
+// and delete is irreversible for the whole team.
 function isOwnerOrAdmin(user, link) {
   return user.role === 'admin' || link.owner_id === user.id;
 }
 
-// Expiry date: the form supplies <input type="datetime-local">
-// ("2026-09-01T18:00"). With JS, the client sends its UTC offset (minutes,
-// getTimezoneOffset) along as tz_offset – then the calculation uses exactly
-// the browser's timezone. Without an offset (no JS), the server's local
-// time is used as an approximation. Stored as UTC in the same format as
-// other timestamps ('YYYY-MM-DD HH:MM:SS'), so datetime('now') in SQL
-// stays directly comparable.
+// Expiry from <input type="datetime-local">. With JS the client sends tz_offset (getTimezoneOffset)
+// for exact browser-timezone math; without it, server local time approximates. Stored as UTC
+// 'YYYY-MM-DD HH:MM:SS' so datetime('now') in SQL stays comparable.
 function parseExpiry(input, tzOffsetRaw) {
   const raw = String(input || '').trim();
   if (!raw) return null;
@@ -444,11 +478,8 @@ function toDatetimeLocal(dbString) {
 
 const normalizeEc = (ec) => (['L', 'M', 'Q', 'H'].includes(ec) ? ec : 'M');
 
-// Errors (e.g. content exceeds QR capacity) are caught here and answered
-// with 400: Express 4 doesn't catch errors from async handlers, and an
-// unhandled rejection would kill the whole process. The download header is
-// only set after successful generation, so an error response never gets
-// downloaded as a file.
+// Errors (e.g. content exceeds QR capacity) become 400: Express 4 does not catch async rejections,
+// which would kill the process. Download header only after success, so errors are not saved as files.
 async function sendQr(res, text, { format, ec = 'M', size = 512, download = false, filename = 'qrcode', color }) {
   const level = normalizeEc(ec);
   try {
@@ -468,20 +499,14 @@ async function sendQr(res, text, { format, ec = 'M', size = 512, download = fals
   }
 }
 
-// QR as an SVG string (for the static generator's inline preview, so the
-// content doesn't end up as an image URL with ?data=… in logs/history). The
-// QR library encodes the text as paths, not as raw text in the SVG – so
-// it's safe to embed directly, injection-wise.
+// QR as SVG string for the generator's inline preview (keeps content out of URLs/logs). The library
+// encodes paths, not raw text, so embedding is injection-safe.
 function qrSvgString(text, ec, color) {
   return QRCode.toString(text, { type: 'svg', errorCorrectionLevel: normalizeEc(ec), margin: 2, color });
 }
 
-// Only selectable in the static generator (dynamic link QR codes
-// deliberately stay black/white). Falls back to black/white on an
-// invalid/empty value instead of producing a broken QR code. Also allows
-// 8-digit hex with alpha (#rrggbbaa), so a transparent background (see
-// below) survives a repeat download via the hidden "light" value – the
-// native <input type=color> itself can only supply 6-digit hex.
+// Generator only (link QR codes stay black/white); invalid values fall back to black/white.
+// 8-digit hex allowed so a transparent background survives a re-download (<input type=color> gives 6 digits).
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
 function qrColors(darkRaw, lightRaw, transparentBg) {
   return {
@@ -490,17 +515,12 @@ function qrColors(darkRaw, lightRaw, transparentBg) {
   };
 }
 
-// Error correction is no longer manually selectable ("L/M/Q/H" isn't
-// meaningful to regular users, see chat context) – instead it's automatic,
-// matched to the use case: WLAN/EPC often end up printed/stuck somewhere
-// and get handled, so more robust (H); URL/Text stay at the default (M).
+// Error correction is automatic per type: WLAN/EPC get printed and handled, so H; URL/Text use M.
 const EC_BY_TYPE = { url: 'M', text: 'M', wlan: 'H', epc: 'H' };
 const QR_TYPES = Object.keys(EC_BY_TYPE);
 
-// Static generator: assemble content depending on the active tab
-// (URL/Text/WLAN/EPC). "url"/"text" are pure passthrough text, WLAN/EPC
-// build a standardized format that most scanner apps recognize
-// automatically (WiFi credentials or SEPA transfer/"GiroCode").
+// Static generator content per tab: url/text are passthrough; WLAN/EPC use standard formats
+// scanner apps recognize (WiFi credentials, SEPA "GiroCode").
 function wifiEscape(s) {
   return String(s).replace(/([\\;,:"])/g, '\\$1');
 }
@@ -511,10 +531,8 @@ function buildWlanContent({ ssid, pass, enc }) {
   const pPart = t === 'nopass' ? '' : `P:${wifiEscape(pass || '')};`;
   return `WIFI:T:${t};S:${wifiEscape(s)};${pPart};`;
 }
-// EPC069-12 ("GiroCode"): BIC has been optional within SEPA since 2016
-// (empty line allowed), trailing empty lines are stripped – the ones in the
-// middle (purpose code/structured reference, unused here) have to stay as
-// placeholders, otherwise the following fields would shift.
+// EPC069-12: BIC optional since 2016; trailing empty lines are stripped, middle ones (unused
+// purpose code/reference) must stay as placeholders or later fields shift.
 const IBAN_RE = /^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/;
 function buildEpcContent({ name, iban, bic, amount, purpose }) {
   const cleanName = String(name || '').trim().slice(0, 70);
@@ -534,10 +552,7 @@ function buildEpcContent({ name, iban, bic, amount, purpose }) {
   while (lines.length && lines[lines.length - 1] === '') lines.pop();
   return lines.join('\n');
 }
-// Detects any URI scheme (http:, mailto:, tel: ...) at the start – if
-// there isn't one, ensureScheme() automatically prepends "https://", so
-// link/QR code/domain work even without a typed prefix. The input fields
-// themselves still show exactly what was typed.
+// Any URI scheme is kept; otherwise "https://" is prepended so link/QR/domain work without a typed prefix.
 const URI_SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
 function ensureScheme(input) {
   return input && !URI_SCHEME_RE.test(input) ? `https://${input}` : input;
@@ -588,8 +603,7 @@ app.get('/login', (req, res) => {
 app.post('/login', (req, res) => {
   const username = String(req.body.username || '').trim();
   const ipKey = `ip:${req.ip}`;
-  // Only real usernames get their own key – otherwise an empty field could
-  // accidentally count all accounts under the same "user:" entry.
+  // Empty username gets no key, else all blank attempts would share one "user:" entry.
   const userKey = username ? `user:${username.toLowerCase()}` : null;
   if (rateLimited(ipKey) || (userKey && rateLimited(userKey))) {
     return res.status(429).send(views.loginPage({ error: 'Zu viele Versuche. Bitte in 15 Minuten erneut probieren.', ssoEnabled: OIDC_ENABLED }));
@@ -609,22 +623,17 @@ app.post('/login', (req, res) => {
 });
 
 app.post('/logout', (req, res) => {
-  // Increment token_version like on a password change – otherwise a
-  // copied/stolen snar_session cookie would stay valid for up to 30 days
-  // after "Abmelden", since Max-Age=0 only tells the browser to delete it,
-  // without invalidating it server-side. Side effect (deliberately
-  // accepted): like a password change, this logs out every device, not
-  // just the current one – this session model has no mechanism to
-  // invalidate a single session in isolation.
+  // Bump token_version like a password change: else a stolen cookie stays valid for 30 days
+  // (Max-Age=0 only clears it in the browser). Accepted side effect: logs out every device,
+  // there is no per-session invalidation.
   const user = sessionUser(getCookie(req, 'snar_session'));
   if (user) stmts.bumpTokenVersion.run(user.id);
   res.setHeader('Set-Cookie', 'snar_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
   res.redirect('/login');
 });
 
-// SSO login (OIDC Authorization Code + PKCE). redirect_uri is derived from
-// the first configured domain (like originFor()), so it exactly matches
-// the URI registered with the identity provider.
+// SSO login (OIDC Authorization Code + PKCE). redirect_uri comes from the first configured
+// domain (like originFor()) to match the URI registered with the identity provider.
 app.get('/login/sso', async (req, res) => {
   if (!OIDC_ENABLED) return res.status(404).send('SSO ist nicht konfiguriert.');
   try {
@@ -642,22 +651,14 @@ app.get('/login/sso', async (req, res) => {
       state,
       nonce,
     });
-    // SameSite=Lax (not Strict): the cookie has to be sent along on
-    // Authentik's redirect back to our callback URL – a top-level
-    // cross-site navigation that SameSite=Strict would block.
-    // redirectUri travels along so /login/sso/callback uses the exact same
-    // URI for the token exchange instead of re-guessing it from the
-    // incoming request (req.protocol/host could differ under a
-    // misconfigured reverse proxy, or the default domain could change
-    // between the two steps) – either would make the token exchange fail
-    // with "redirect_uri mismatch".
+    // SameSite=Lax (not Strict): Strict would block the cookie on the IdP's cross-site redirect back.
+    // redirectUri travels along so the callback reuses it exactly; re-deriving it (proxy, domain change)
+    // could cause a "redirect_uri mismatch".
     res.setHeader('Set-Cookie',
       `snar_oidc=${signOidcState({ codeVerifier, state, nonce, redirectUri })}; HttpOnly; SameSite=Lax; Path=/login/sso; Max-Age=600${req.secure ? '; Secure' : ''}`);
     res.redirect(authUrl.href);
   } catch (e) {
-    // Server log only, the message shown in the browser is deliberately
-    // generic – otherwise typical first-setup errors (wrong issuer URL,
-    // discovery unreachable) would leave no trace to diagnose.
+    // Details in the server log only; the browser message stays generic.
     console.error('SSO (/login/sso) fehlgeschlagen:', e);
     res.status(502).send(views.loginPage({ error: 'SSO-Anmeldung aktuell nicht erreichbar. Bitte später erneut versuchen.', ssoEnabled: OIDC_ENABLED }));
   }
@@ -671,9 +672,7 @@ app.get('/login/sso/callback', async (req, res) => {
   }
   try {
     const config = await getOidcConfig();
-    // Same redirectUri as in the authorize step (see /login/sso) + the
-    // incoming request's actual query (code/state) – not rebuilt from
-    // req.protocol/host, see the comment there.
+    // Same redirectUri as in the authorize step (see /login/sso), not rebuilt from req.protocol/host.
     const currentUrl = new URL(saved.redirectUri + req.url.slice(req.path.length));
     const tokens = await oidc.authorizationCodeGrant(config, currentUrl, {
       pkceCodeVerifier: saved.codeVerifier,
@@ -690,10 +689,7 @@ app.get('/login/sso/callback', async (req, res) => {
     setSessionCookie(res, req, user);
     res.redirect('/app');
   } catch (e) {
-    // Server log only, see the comment at /login/sso – token exchange/
-    // ID-token validation can easily fail during first setup for reasons
-    // (redirect_uri mismatch, clock drift, wrong secret) that would be
-    // nearly impossible to narrow down without detail.
+    // Server log only (see /login/sso): redirect_uri mismatch, clock drift etc. need the detail.
     console.error('SSO (/login/sso/callback) fehlgeschlagen:', e);
     res.setHeader('Set-Cookie', 'snar_oidc=; HttpOnly; SameSite=Lax; Path=/login/sso; Max-Age=0');
     res.status(401).send(views.loginPage({ error: 'SSO-Anmeldung fehlgeschlagen.', ssoEnabled: OIDC_ENABLED }));
@@ -702,8 +698,7 @@ app.get('/login/sso/callback', async (req, res) => {
 
 app.get('/', (req, res) => res.redirect(sessionUser(getCookie(req, 'snar_session')) ? '/app' : '/login'));
 app.get('/healthz', (req, res) => res.type('text').send('ok'));
-// Public, unauthenticated (same spirit as /healthz) – purely a self-
-// recognition marker for the "Domain testen"-check, see INSTANCE_TOKEN above.
+// Public, unauthenticated – self-recognition marker for "Domain testen", see INSTANCE_TOKEN.
 app.get('/healthz/instance', (req, res) => res.type('text').send(INSTANCE_TOKEN));
 
 app.get('/app', requireAuth, (req, res) => {
@@ -717,10 +712,7 @@ app.get('/app', requireAuth, (req, res) => {
 app.post('/app/links', requireAuth, (req, res) => {
   const { targetUrl, title, visibility, domain, expiresAt } = readLinkFields(req);
   const slug = String(req.body.slug || '').trim();
-  // Re-renders the create form directly (like POST /login, POST /app/qr)
-  // instead of redirecting on failure, so the entered values survive and
-  // the offending field can be highlighted – a redirect+flash would lose
-  // everything the user just typed.
+  // Re-render instead of redirect on failure: keeps entered values and can highlight the field.
   const rerenderDashboard = (error, errorField) => {
     res.send(views.dashboard({
       links: stmts.linksByOwner.all(req.user.id), user: req.user, flash: flashFromQuery(req), domains: getDomains(),
@@ -753,9 +745,8 @@ function loadOwnLink(req, res, next) {
   next();
 }
 
-// Same shape as loadOwnLink above, for the two /app/domains/:id/* routes
-// that redirect-with-flash on a missing id (set-default, delete) – a third
-// (check-reachability) needs a JSON 404 instead and keeps its own inline check.
+// Like loadOwnLink for the /app/domains/:id/* routes that redirect-with-flash;
+// check-reachability needs a JSON 404 and checks inline.
 function loadDomain(req, res, next) {
   const domain = stmts.domainById.get(Number(req.params.id));
   if (!domain) return flashRedirect(res, '/app/domains', 'err', 'Domain nicht gefunden.');
@@ -763,32 +754,74 @@ function loadDomain(req, res, next) {
   next();
 }
 
-// Shared by the GET route and the POST .../update failure path (see below)
-// – re-rendering on a validation error needs the exact same stats/audit
-// data as a normal page load, so this avoids computing it twice. `overrides`
-// carries the validation-error extras (error/errorField/values) on the
-// failure path; the plain GET call omits it and gets the normal DB-backed render.
+// Shared by the GET route and the POST .../update failure path; 'overrides' carries
+// error/errorField/values on the failure path.
 function renderLinkDetail(req, res, link, overrides = {}) {
-  const ranges = linkStatsRanges(link.id, link.created_at);
+  // Custom date range needs both bounds valid, else silently ignored (falls back to "Monat").
+  const { from, to } = req.query;
+  const custom = isValidDateStr(from) && isValidDateStr(to)
+    ? (from <= to ? { from, to } : { from: to, to: from })
+    : null;
+  const ranges = linkStatsRanges(link.id, link.created_at, custom);
+
+  // "Letzte Klicks": always the most recent clicks, independent of the stats range. Keyset pagination
+  // on id (recentClicks* in db.js), not LIMIT/OFFSET, so deep pages stay fast; a malformed or stale
+  // cursor falls back to the first page.
+  const recentSize = 25;
+  const beforeId = /^\d+$/.test(req.query.clicksBefore || '') ? Number(req.query.clicksBefore) : null;
+  const afterId = !beforeId && /^\d+$/.test(req.query.clicksAfter || '') ? Number(req.query.clicksAfter) : null;
+
+  const firstPage = () => {
+    const fetched = stmts.recentClicksFirst.all(link.id, recentSize + 1);
+    return { recent: fetched.slice(0, recentSize), hasOlder: fetched.length > recentSize, hasNewer: false };
+  };
+  let page;
+  if (beforeId) {
+    const fetched = stmts.recentClicksOlder.all(link.id, beforeId, recentSize + 1);
+    // hasNewer: we navigated here from a newer page, it's still there
+    page = { recent: fetched.slice(0, recentSize), hasOlder: fetched.length > recentSize, hasNewer: true };
+  } else if (afterId) {
+    const fetched = stmts.recentClicksNewer.all(link.id, afterId, recentSize + 1); // ascending
+    page = { recent: fetched.slice(0, recentSize).reverse(), hasOlder: true, hasNewer: fetched.length > recentSize };
+  } else {
+    page = firstPage();
+  }
+  // A cursor that leads nowhere falls back to the first page.
+  if (!page.recent.length && (beforeId || afterId)) page = firstPage();
+  const { recent, hasOlder, hasNewer } = page;
+  // #letzte-klicks: the hrefs reload the page; without the fragment the scroll position is lost.
+  const clicksHref = (cursorParam, cursorId) => {
+    const params = new URLSearchParams();
+    if (custom) { params.set('from', custom.from); params.set('to', custom.to); }
+    params.set(cursorParam, String(cursorId));
+    return `/app/links/${link.id}?${params.toString()}#letzte-klicks`;
+  };
+
   const stats = {
-    // ranges.gesamt already sums every click since the link's creation
-    // (its window starts at the creation month) – same number a dedicated
-    // COUNT(*) query would give, no need for a second round-trip.
-    total: ranges.gesamt.total,
     ranges,
+    lastClickTs: stmts.lastClick.get(link.id)?.ts || null,
+    initialRange: custom ? 'custom' : 'monat',
+    customRange: custom,
     referrers: stmts.topReferrers.all(link.id),
     devices: stmts.deviceSplit.all(link.id),
     browsers: stmts.browserSplit.all(link.id),
-    recent: stmts.recentClicks.all(link.id),
+    languages: stmts.languageSplit.all(link.id),
+    recent,
+    recentTotal: stmts.recentClicksCount.get(link.id).n,
+    // "from–to of total": count of newer rows via index range scan (idx_clicks_link_id).
+    recentFrom: recent.length ? stmts.recentClicksNewerCount.get(link.id, recent[0].id).n + 1 : 0,
+    // Newer = toward the top of the list (more recent), older = toward the
+    // Newer/older name the data direction, not the screen position.
+    recentNewerHref: hasNewer && recent.length ? clicksHref('clicksAfter', recent[0].id) : null,
+    recentOlderHref: hasOlder && recent.length ? clicksHref('clicksBefore', recent[recent.length - 1].id) : null,
+    recentSize,
   };
   const ownerOrAdmin = isOwnerOrAdmin(req.user, link);
   res.send(views.linkDetail({
     link, origin: originFor(link, req), short: shortUrl(link, req), domains: getDomains(), stats,
     expiresAtLocal: toDatetimeLocal(link.expires_at), expired: isExpired(link),
     user: req.user, flash: flashFromQuery(req), page: pageFromReferer(req),
-    // Drives both the visibility radios and the target-URL field (see
-    // POST .../update below) – both have been restricted identically to
-    // owner/admin since the pentest.
+    // Drives the visibility radios and the target-URL field (owner/admin only, see POST .../update).
     canEditRestricted: ownerOrAdmin,
     canDelete: ownerOrAdmin,
     audit: ownerOrAdmin ? stmts.linkAuditByLink.all(link.id) : [],
@@ -802,29 +835,22 @@ app.get('/app/links/:id', requireAuth, loadOwnLink, (req, res) => {
 
 app.post('/app/links/:id/update', requireAuth, loadOwnLink, (req, res) => {
   const { targetUrl, title, visibility, domain, expiresAt } = readLinkFields(req);
+  const ownerOrAdmin = isOwnerOrAdmin(req.user, req.link);
   if (!isHttpUrl(targetUrl)) {
     return renderLinkDetail(req, res, req.link, {
       error: 'Ungültige URL – nichts geändert.',
       errorField: 'target_url',
-      values: { target_url: String(req.body.target_url || ''), title, domain, expiresAtLocal: String(req.body.expires_at || '') },
+      // keep the submitted visibility (only owner/admin can change it; others see the stored value)
+      values: { target_url: String(req.body.target_url || ''), title, domain, expiresAtLocal: String(req.body.expires_at || ''), visibility: ownerOrAdmin ? visibility : req.link.visibility },
     });
   }
-  const ownerOrAdmin = isOwnerOrAdmin(req.user, req.link);
-  // The target URL is a link's most security-critical field (redirect to
-  // phishing/malware) – unlike title/domain/expiry, it stays reserved for
-  // owner/admin even on org links (pentest finding, see README). Unlike
-  // the visibility handling below, this isn't silently discarded but hard
-  // rejected: the UI already locks the field (see linkDetail()), so a
-  // request with a changed URL despite the locked field is either a bug or
-  // a deliberate bypass attempt.
+  // The target URL is the most security-critical field (phishing/malware redirect): owner/admin only,
+  // even on org links. Hard 403 instead of silent discard: the UI locks the field, so a changed
+  // value is a bug or a bypass attempt.
   if (!ownerOrAdmin && targetUrl !== req.link.target_url) {
     return res.status(403).send('Nur Besitzer:in/Admin dürfen die Ziel-URL ändern.');
   }
-  // Non-owners of an org link may change everything except visibility and
-  // the target URL (see isOwnerOrAdmin) – visibility stays untouched no
-  // matter what the form sends, so nobody can lock themselves out by
-  // saving (canManage() only grants non-owners access as long as
-  // visibility stays 'org').
+  // Non-owners of an org link keep the stored visibility, so nobody can lock themselves out by saving.
   const finalVisibility = ownerOrAdmin ? visibility : req.link.visibility;
   if (targetUrl !== req.link.target_url) {
     stmts.insertLinkAudit.run(req.link.id, req.user.id, req.link.target_url, targetUrl);
@@ -853,10 +879,8 @@ app.get('/app/user-vault', requireAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Org vault (every logged-in member). Deliberately sits under /app instead
-// of the root path: everything under /app/* is already protected against
-// slug collisions by the reserved word "app", making a separate
-// reservation for "vault" unnecessary.
+// Org vault (every logged-in member). Under /app since "app" is already reserved, so "vault"
+// needs no extra slug reservation.
 // ---------------------------------------------------------------------------
 app.get('/app/org-vault', requireAuth, (req, res) => {
   const links = stmts.vaultLinks.all();
@@ -868,9 +892,8 @@ app.get('/app/org-vault', requireAuth, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// Static QR code generator (content is never stored – and, thanks to POST,
-// never visible in the URL/history/access logs either: the form and
-// downloads use POST, the preview is rendered server-side inline into the HTML.)
+// Static QR generator: content is never stored; POST keeps it out of URLs/history/access logs,
+// the preview is rendered inline server-side.
 // ---------------------------------------------------------------------------
 app.get('/app/qr', requireAuth, (req, res) => {
   res.send(views.staticQrPage({ ec: EC_BY_TYPE.url, user: req.user }));
@@ -881,9 +904,7 @@ app.post('/app/qr', requireAuth, async (req, res) => {
   const ec = EC_BY_TYPE[type];
   const transparentBg = req.body.light_transparent === '1';
   const { dark, light } = qrColors(String(req.body.dark || ''), String(req.body.light || ''), transparentBg);
-  // Raw values from every tab are kept for re-rendering the form (including
-  // the currently inactive tab's), only `content` (the text actually
-  // encoded) decides between preview and error.
+  // Raw values of every tab are kept for re-rendering; only `content` decides between preview and error.
   const values = {
     type,
     data: String(req.body.data || '').slice(0, 2000),
@@ -930,8 +951,7 @@ app.post('/app/users', requireAuth, requireAdmin, (req, res) => {
   const username = String(req.body.username || '').trim();
   const password = String(req.body.password || '');
   const role = req.body.role === 'admin' ? 'admin' : 'member';
-  // Direct re-render on failure (see the comment at POST /app/links) –
-  // password is deliberately never echoed back, only username/role.
+  // Re-render on failure (see POST /app/links); password is never echoed back.
   const rerenderUsers = (error, errorField) => {
     res.send(views.usersPage({
       users: stmts.listUsers.all(), user: req.user, flash: flashFromQuery(req),
@@ -963,8 +983,7 @@ app.post('/app/users/:id/delete', requireAuth, requireAdmin, (req, res) => {
   const reassignId = Number(req.body.reassign_to);
   const reassignTo = reassignId && reassignId !== target.id ? stmts.userById.get(reassignId) : null;
   const recipient = reassignTo || req.user; // fallback: the admin performing the action
-  stmts.reassignLinks.run(recipient.id, target.id);
-  stmts.deleteUser.run(target.id);
+  deleteUserAndReassign(target.id, recipient.id);
   const you = recipient.id === req.user.id ? 'dich' : `"${recipient.username}"`;
   flashRedirect(res, '/app/users', 'ok', `"${target.username}" gelöscht, Links wurden an ${you} übertragen.`);
 });
@@ -1003,23 +1022,12 @@ app.post('/app/domains/:id/set-default', requireAuth, requireAdmin, loadDomain, 
   flashRedirect(res, '/app/domains', 'ok', `"${req.domain.origin}" ist jetzt die Standard-Domain.`);
 });
 
-// Manual, on-demand only (never automatic/on page load): DNS/reverse proxy
-// for a freshly added domain are often still being set up, so a check that
-// runs on every page load would just show a false "nicht erreichbar" during
-// that window. Diagnostic aid, not validation – adding a domain never
-// depends on this succeeding.
+// Manual, on-demand only: DNS/proxy of a fresh domain is often still being set up, so an automatic
+// check would show a false "nicht erreichbar". Diagnostic aid; adding a domain never depends on it.
 //
-// isPrivateOrLinkLocalIp/resolvesToPrivateIp: defense-in-depth against an
-// admin (or a compromised admin session) adding e.g. "http://169.254.169.254"
-// (cloud metadata) or an internal-network host and using the distinguishable
-// outcomes (HTTP status vs. timeout vs. connection failed) as a coarse
-// internal-network probe. Admins already have far more powerful primitives
-// than this, so it's a hardening measure, not a hard security boundary.
-// Loopback (127.0.0.0/8, ::1) is deliberately NOT blocked: it's the same
-// machine snar itself runs on (an admin already has that access some other
-// way in any realistic self-hosted deployment) and it's the legitimate case
-// for a local/dev instance whose own domain points back at itself, like this
-// one during development (BASE_URL=http://localhost:3000).
+// isPrivateOrLinkLocalIp/resolvesToPrivateIp: SSRF hardening so an admin (or hijacked admin session)
+// cannot probe internal hosts (e.g. 169.254.169.254 metadata) via distinguishable outcomes.
+// Loopback is deliberately allowed: local/dev instances point at themselves (BASE_URL=http://localhost:3000).
 function isPrivateOrLinkLocalIp(ip) {
   const type = net.isIP(ip);
   if (type === 4) {
@@ -1053,13 +1061,8 @@ app.post('/app/domains/:id/check-reachability', requireAuth, requireAdmin, async
     return res.json({ ok: false, reason: 'Zeigt auf eine private/interne Adresse – wird aus Sicherheitsgründen nicht geprüft.' });
   }
   try {
-    // redirect: 'manual' – sonst würde fetch() einem 3xx automatisch folgen
-    // und die Private-IP-Prüfung oben liefe ins Leere: ein öffentlich
-    // erreichbarer Server könnte per Redirect auf eine interne Adresse (oder
-    // Cloud-Metadata) zeigen, ohne dass der ursprüngliche Hostname das
-    // verraten würde. Diagnose-Hilfsmittel, keine Weiterleitung nötig – das
-    // eigentliche Kurzlink-Redirect läuft im Browser der Endnutzer:innen,
-    // nicht über diesen Check.
+    // redirect: 'manual' – sonst folgt fetch() einem 3xx und die Private-IP-Prüfung läuft ins Leere
+    // (Redirect auf interne Adresse/Cloud-Metadata). Das eigentliche Kurzlink-Redirect läuft im Browser.
     const response = await fetch(`${domain.origin}/healthz/instance`, { signal: AbortSignal.timeout(5000), redirect: 'manual' });
     if (response.status >= 300 && response.status < 400) {
       return res.json({ ok: false, reason: 'Antwortet mit einer Weiterleitung – wird aus Sicherheitsgründen nicht automatisch verfolgt.' });
@@ -1092,9 +1095,7 @@ app.get('/app/account', requireAuth, (req, res) => {
 });
 
 app.post('/app/account/password', requireAuth, (req, res) => {
-  // The UI already hides the form for SSO accounts (see accountPage()) –
-  // enforce it server-side anyway, same principle as other permission
-  // checks in the app (e.g. the visibility lock on org links).
+  // The UI hides the form for SSO accounts – enforced server-side too.
   if (req.user.sso_subject) {
     return flashRedirect(res, '/app/account', 'err', 'Für SSO-Accounts nicht möglich — das Passwort wird extern verwaltet.');
   }
@@ -1109,8 +1110,7 @@ app.post('/app/account/password', requireAuth, (req, res) => {
     return flashRedirect(res, '/app/account', 'err', 'Passwörter stimmen nicht überein.');
   }
   stmts.updatePassword.run(hashPassword(next), req.user.id);
-  // Invalidate every previously issued cookie (other devices get logged
-  // out) and log this device back in fresh with the new version.
+  // Invalidate every issued cookie (other devices) and log this device back in fresh.
   stmts.bumpTokenVersion.run(req.user.id);
   setSessionCookie(res, req, stmts.userById.get(req.user.id));
   flashRedirect(res, '/app/account', 'ok', 'Passwort geändert. Andere Geräte wurden abgemeldet.');
@@ -1128,8 +1128,7 @@ app.get('/:slug([A-Za-z0-9\-_]{1,64})', (req, res, next) => {
   const { device, browser } = parseUA(req.get('user-agent'));
   const lang = (req.get('accept-language') || '').split(',')[0].slice(0, 8);
 
-  // Redirect goes out first, click insert after: stats should never delay
-  // the redirect, not just never block it on an error.
+  // Redirect first, click insert after: stats must never delay the redirect.
   res.set('Cache-Control', 'no-store'); // 302 + no-store => target stays changeable at any time
   res.redirect(302, link.target_url);
 
