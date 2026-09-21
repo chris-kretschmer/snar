@@ -4,7 +4,7 @@
 #      prebuilt binaries for that) – the build toolchain stays entirely in
 #      this stage and never ends up in the runtime image ----
 # Base image pinned by digest (Dependabot proposes newer digests, see .github/dependabot.yml).
-FROM node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85 AS builder
+FROM node:26-alpine@sha256:dbaa92e5758cbbcf85d65d5403fdb530fe3442cbe8c6dbfb7ef23365450d5070 AS builder
 WORKDIR /app
 RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json* ./
@@ -13,7 +13,7 @@ RUN npm ci --omit=dev
 # ---- Runtime: slim image without the build toolchain ----
 # tzdata: stats are bucketed in server local time ('localtime'); without
 # zone info, TZ=Europe/Berlin would be ignored inside the Alpine container.
-FROM node:22-alpine@sha256:b6f26b36c8ff49624cfdac716b8ea1138d606df02586a77d364bb5536a634f85
+FROM node:26-alpine@sha256:dbaa92e5758cbbcf85d65d5403fdb530fe3442cbe8c6dbfb7ef23365450d5070
 RUN apk add --no-cache libstdc++ tzdata \
  && mkdir -p /data && chown -R node:node /data
 WORKDIR /app
