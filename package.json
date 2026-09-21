@@ -15,7 +15,7 @@
   "dependencies": {
     "better-sqlite3": "^11.7",
     "compression": "^1.8.1",
-    "express": "^4.22.3",
+    "express": "^5.2.1",
     "openid-client": "^6.8.5",
     "qrcode": "^1.5"
   },
