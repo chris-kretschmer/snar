@@ -4,6 +4,19 @@ services:
     container_name: snar
     restart: unless-stopped
     cpus: 0.5
+    mem_limit: 512m
+    pids_limit: 200
+    # `docker stop` reaches snar as SIGTERM through a real init process and closes the database cleanly.
+    init: true
+    # Hardening: no Linux capabilities, no privilege escalation, read-only root file system
+    # (only /data, the volume, and /tmp are writable).
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     # Docker's own json-file logs grow without bound otherwise – over years
     # of continuous operation that becomes a slow-creeping disk problem.
     logging:
@@ -11,8 +24,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    # Bound to this machine only: snar has no TLS of its own, so put a reverse proxy with HTTPS in front
+    # (see README). BIND_ADDRESS=0.0.0.0 in .env publishes the port on all interfaces, e.g. to test in a LAN.
     ports:
-      - "3000:3000"
+      - "${BIND_ADDRESS:-127.0.0.1}:3000:3000"
     environment:
       # Timezone for stats: day/hour boundaries in the click charts cut at
       # this zone (clicks themselves are stored in UTC).
@@ -21,7 +36,8 @@ services:
       # Real values come from a local .env file (see .env.example) – NEVER
       # put real credentials directly here, this file is meant for the repo.
       ADMIN_USER: "${ADMIN_USER:-admin}"
-      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?Bitte ADMIN_PASSWORD in einer .env-Datei setzen, siehe .env.example}"
+      # Only needed until the first admin exists; snar refuses to start without it then. Remove it from .env afterwards.
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       # Only used on the very first start: initial short-domain(s), ends up
       # in the QR codes! Manageable afterwards under Domains (/app/domains)
       # – this variable is then ignored. Multiple domains: comma-separated.
@@ -35,12 +51,22 @@ services:
       # Update hint for admins in the sidebar: asks the GitHub Releases API every
       # few hours whether a newer version exists. "off" disables the request.
       UPDATE_CHECK: "${UPDATE_CHECK:-on}"
+      # Optional: delete clicks older than this many days (daily). 0 keeps everything.
+      CLICK_RETENTION_DAYS: "${CLICK_RETENTION_DAYS:-0}"
+      # Optional: keep the session secret out of the database (and its backups), at least 32 random characters.
+      SESSION_SECRET: "${SESSION_SECRET:-}"
+      # "always" forces the Secure flag on cookies if TLS ends at a proxy that snar does not trust (see README).
+      COOKIE_SECURE: "${COOKIE_SECURE:-auto}"
       # Optional: SSO login via OIDC (e.g. Authentik) in addition to
       # password login. Only active once all three variables are set.
       # Register the redirect URI with the provider: <domain>/login/sso/callback
       # OIDC_ISSUER_URL: "${OIDC_ISSUER_URL:-}"
       # OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
       # OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
+      # Optional: only these SSO users may log in (either rule is enough): members of a group (the provider must
+      # send the "groups" claim) or holders of a verified e-mail address in one of these domains. Comma-separated.
+      # OIDC_ALLOWED_GROUPS: "${OIDC_ALLOWED_GROUPS:-}"
+      # OIDC_ALLOWED_EMAIL_DOMAINS: "${OIDC_ALLOWED_EMAIL_DOMAINS:-}"
     volumes:
       - snar-data:/data
 

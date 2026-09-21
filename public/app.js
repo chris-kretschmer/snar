@@ -2,9 +2,14 @@
 
 // Close a popover on an outside click or Escape. composedPath() instead of
 // contains() survives DOM rebuilds inside the wrapper (e.g. the day grid).
-function closeOnOutside(wrapper, close) {
+function closeOnOutside(wrapper, close, isOpen = null) {
   document.addEventListener('click', (e) => { if (!e.composedPath().includes(wrapper)) close(); });
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const wasOpen = isOpen ? isOpen() : false;
+    close();
+    if (wasOpen) e.preventDefault(); // Esc closed a popup: it must not also close a <dialog> around it
+  });
 }
 
 // Shared scaffold for custom dropdown/datetime: the real element moves into a
@@ -101,7 +106,7 @@ document.querySelectorAll('select').forEach((select) => {
     const open = menu.classList.toggle('open');
     trigger.setAttribute('aria-expanded', String(open));
   });
-  closeOnOutside(wrapper, closeMenu);
+  closeOnOutside(wrapper, closeMenu, () => menu.classList.contains('open'));
 });
 
 // Custom date/time picker (same principle as the dropdown): the real
@@ -286,16 +291,20 @@ document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
     minute = Math.min(59, Math.max(0, Number(minuteInput.value) || 0));
     writeValue();
     syncLabel();
+    pendingRestore = null;
     closePanel();
   });
   panel.querySelector('.dt-clear-btn').addEventListener('click', () => {
     selectedDate = null;
     writeValue();
     syncLabel();
+    pendingRestore = null;
     closePanel();
   });
 
+  let pendingRestore = null; // state to return to if the panel is dismissed without Übernehmen/Entfernen
   function openPanel() {
+    pendingRestore = { selectedDate: selectedDate && { ...selectedDate }, hour, minute };
     renderCalendar();
     hourInput.value = dtPad(hour);
     minuteInput.value = dtPad(minute);
@@ -308,6 +317,10 @@ document.querySelectorAll('input[type="datetime-local"]').forEach((input) => {
     trigger.setAttribute('aria-expanded', 'true');
   }
   function closePanel() {
+    if (pendingRestore) {
+      ({ selectedDate, hour, minute } = pendingRestore);
+      pendingRestore = null;
+    }
     panel.classList.remove('open');
     trigger.setAttribute('aria-expanded', 'false');
   }
@@ -363,6 +376,13 @@ document.querySelectorAll('.reach-test-btn').forEach((btn) => {
     btn.textContent = 'Wird geprüft…';
     try {
       const res = await fetch(`/app/domains/${btn.dataset.domainId}/check-reachability`, { method: 'POST' });
+      if (!(res.headers.get('content-type') || '').includes('application/json')) {
+        btn.textContent = 'Bitte neu anmelden';
+        btn.classList.add('fail');
+        btn.title = 'Die Sitzung ist abgelaufen oder du bist kein Admin mehr. Lade die Seite neu und melde dich erneut an.';
+        if (copyAnnouncer) copyAnnouncer.textContent = btn.title;
+        return;
+      }
       const data = await res.json();
       const text = data.ok ? 'Erreichbar' : 'Nicht erreichbar';
       btn.textContent = text;
@@ -393,7 +413,7 @@ document.querySelectorAll('.reach-test-btn').forEach((btn) => {
 // path+query (document.referrer never carries the #fragment).
 const backLinks = document.querySelectorAll('a[data-back]');
 if (backLinks.length) {
-  const pathQuery = (u) => u.pathname + u.search;
+  const pathQuery = (u) => u.pathname.replace(/\/update$/, '') + u.search; // a failed save re-renders at .../update: same page
   const store = {
     get(k) { try { return JSON.parse(sessionStorage.getItem('snarBack:' + k)); } catch { return null; } },
     set(k, v) { try { sessionStorage.setItem('snarBack:' + k, JSON.stringify(v)); } catch { /* storage blocked: fall back to plain history.back() */ } },
@@ -413,7 +433,7 @@ if (backLinks.length) {
 
   let entry = history.state && history.state.snarBack;
   if (!entry) {
-    const prev = sameOrigin && ref.pathname === location.pathname ? store.get(pathQuery(ref)) : null;
+    const prev = sameOrigin && pathQuery(ref).split('?')[0] === pathQuery(location).split('?')[0] ? store.get(pathQuery(ref)) : null;
     entry = prev
       ? { depth: prev.depth + 1, hasOrigin: prev.hasOrigin, nav: prev.nav }
       : { depth: 0, hasOrigin: sameOrigin, nav: activeNavHref() };
@@ -440,6 +460,12 @@ if (backLinks.length) {
     });
   });
 }
+
+// A click on the ::backdrop targets the <dialog> itself, but so does one on its padding: compare with the box.
+const isBackdropClick = (e, dialog) => {
+  const r = dialog.getBoundingClientRect();
+  return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
+};
 
 // Not inline onsubmit: the text would land in a JS string context, which HTML escaping doesn't secure.
 document.querySelectorAll('form[data-confirm]').forEach((form) => {
@@ -477,7 +503,7 @@ if (confirmDialog) {
   });
   // A click on the ::backdrop also closes it.
   confirmDialog.addEventListener('click', (e) => {
-    if (e.target === confirmDialog) { pendingForm = null; confirmDialog.close(); }
+    if (e.target === confirmDialog && isBackdropClick(e, confirmDialog)) { pendingForm = null; confirmDialog.close(); }
   });
 }
 
@@ -488,7 +514,7 @@ document.querySelectorAll('[data-open-dialog]').forEach((btn) => {
 });
 document.querySelectorAll('dialog.dist-dialog').forEach((dialog) => {
   dialog.querySelector('[data-close-dialog]')?.addEventListener('click', () => dialog.close());
-  dialog.addEventListener('click', (e) => { if (e.target === dialog) dialog.close(); });
+  dialog.addEventListener('click', (e) => { if (e.target === dialog && isBackdropClick(e, dialog)) dialog.close(); });
 });
 
 // Delete account: works without JS (the server hands the links to the acting
@@ -525,6 +551,7 @@ if (deleteUserDialog) {
   deleteUserDialog.querySelector('[data-dialog-confirm]').addEventListener('click', () => {
     deleteUserDialog.close();
     if (pendingForm) {
+      pendingForm.querySelector('input[name=reassign_to]')?.remove();
       const hidden = document.createElement('input');
       hidden.type = 'hidden';
       hidden.name = 'reassign_to';
@@ -539,7 +566,7 @@ if (deleteUserDialog) {
     deleteUserDialog.close();
   });
   deleteUserDialog.addEventListener('click', (e) => {
-    if (e.target === deleteUserDialog) { pendingForm = null; deleteUserDialog.close(); }
+    if (e.target === deleteUserDialog && isBackdropClick(e, deleteUserDialog)) { pendingForm = null; deleteUserDialog.close(); }
   });
 }
 
@@ -566,7 +593,13 @@ if (sidebar) {
   // removes it from tab order/AT tree while hidden. Outside the menuToggle
   // branch because admins have no toggle but still need it inert.
   const mobileNavQuery = window.matchMedia('(max-width: 760px)');
-  const syncInert = () => { sidebar.inert = mobileNavQuery.matches && !sidebar.classList.contains('open'); };
+  const behind = ['.shell-main', '.bottom-nav', '.mobile-topbar'].map((sel) => document.querySelector(sel)).filter(Boolean);
+  const syncInert = () => {
+    const overlay = mobileNavQuery.matches;
+    const open = sidebar.classList.contains('open');
+    sidebar.inert = overlay && !open;
+    behind.forEach((el) => { el.inert = overlay && open; }); // open overlay: focus stays inside the sidebar
+  };
   mobileNavQuery.addEventListener('change', () => {
     // Resized past the breakpoint with the overlay open: close it, else the
     // page stays scroll-locked behind the now permanent sidebar.
@@ -760,7 +793,7 @@ if (rangeGroup) {
     tooltip.style.left = `${left}px`;
     tooltip.style.top = `${top}px`;
     tooltipTitle.textContent = hoverRect.dataset.label;
-    tooltipValue.textContent = hoverRect.dataset.value;
+    tooltipValue.textContent = fmt(Number(hoverRect.dataset.value));
     tooltip.classList.add('visible');
   }
   function hideTooltip() { tooltip.classList.remove('visible'); hoverDot.classList.remove('visible'); }
@@ -781,7 +814,7 @@ if (rangeGroup) {
     activePoint = Math.max(0, Math.min(bands.length - 1, next));
     const band = bands[activePoint];
     showTooltip(band);
-    chartAnnouncer.textContent = `${band.dataset.label}: ${band.dataset.value} ${band.dataset.value === '1' ? 'Klick' : 'Klicks'}`;
+    chartAnnouncer.textContent = `${band.dataset.label}: ${fmt(Number(band.dataset.value))} ${band.dataset.value === '1' ? 'Klick' : 'Klicks'}`;
   }
   chartWrap.addEventListener('keydown', (e) => {
     const count = hoverGroup.querySelectorAll('.chart-hover').length;
@@ -891,6 +924,12 @@ function guardUnsavedChanges(form) {
 }
 guardUnsavedChanges(document.getElementById('edit-form'));
 guardUnsavedChanges(document.getElementById('password-form'));
+
+// Expiry in the link header: stored in UTC, shown in the browser's time zone like the picker (server text is the fallback).
+document.querySelectorAll('time.local-time').forEach((el) => {
+  const d = new Date(el.getAttribute('datetime'));
+  if (!Number.isNaN(d.getTime())) el.textContent = d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) + '\u00A0Uhr';
+});
 
 // Update box (admins, views.js): can be dismissed per version; a newer release brings it back.
 const updateBox = document.getElementById('update-box');

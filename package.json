@@ -6,7 +6,8 @@
   "license": "AGPL-3.0-or-later",
   "main": "src/server.js",
   "scripts": {
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node --test"
   },
   "engines": {
     "node": "^20.19 || >=22.12"

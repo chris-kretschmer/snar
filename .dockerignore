@@ -6,3 +6,6 @@ data
 .git
 .gitignore
 README.md
+.env*
+.github
+test

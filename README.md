@@ -6,7 +6,7 @@ snar ist ein selbst gehostetes Kurzlink-Tool mit dynamischen QR-Codes: Jeder Lin
 
 ## Features
 
-- **Short-Links** – Zufalls-Slug (56-Zeichen-Alphabet ohne verwechselbare Zeichen wie `0`/`O`/`o` oder `1`/`I`/`l`) oder eigener Wunsch-Slug, Titel für die interne Übersicht, Ziel jederzeit änderbar. Ein paar Wörter (`app`, `login`, `logout`, `static`, `healthz`, `favicon.ico`, `robots.txt`) sind als Slug reserviert.
+- **Short-Links** – Zufalls-Slug (56-Zeichen-Alphabet ohne verwechselbare Zeichen wie `0`/`O`/`o` oder `1`/`I`/`l`) oder eigener Wunsch-Slug, Titel für die interne Übersicht, Ziel jederzeit änderbar. Ein paar Wörter (`app`, `login`, `logout`, `static`, `healthz`) sind als Slug reserviert.
 - **Dynamische QR-Codes** – als SVG oder PNG bis 2048 px, Redirect per `302` + `Cache-Control: no-store`.
 - **Statischer QR-Code-Generator** – Vier Eingabe-Arten: URL, freier Text, WLAN-Zugangsdaten, SEPA-Überweisung/GiroCode. Eigene Vorder-/Hintergrundfarbe, auch transparent. Wird **nicht gespeichert** und läuft komplett über POST, damit der Inhalt nicht in Adressleiste, Browser-Verlauf oder Access-Logs landet.
 - **Statistik pro Link** – Kennzahlen (Klicks gesamt, heute, letzte 7/30 Tage, Ø pro Tag, letzter Klick), Klickverlauf als Diagramm mit Zeitraum Heute/7 Tage/30 Tage/12 Monate/Gesamt oder frei wählbar (per Tastatur bedienbar), Besuchende (Quelle nur als Hostname, Gerätetyp, Browser, Sprache; ab fünf Einträgen mit „Weitere“-Dialog) und die letzten Klicks zum Durchblättern. Bewusst datensparsam: keine IP-Speicherung, kein Fingerprinting.
@@ -29,7 +29,7 @@ cp .env.example .env   # dann ADMIN_PASSWORD & Co. in .env eintragen
 docker compose up -d --build
 ```
 
-`compose.yaml` liest die Zugangsdaten aus einer lokalen `.env`-Datei (nicht im Repo, siehe `.gitignore`) – **niemals echte Passwörter direkt in `compose.yaml` eintragen**, das landet sonst in der Versionskontrolle. Ohne gesetztes `ADMIN_PASSWORD` bricht der Start bewusst mit einer Fehlermeldung ab, statt mit einem Standard-Passwort hochzufahren.
+`compose.yaml` liest die Zugangsdaten aus einer lokalen `.env`-Datei (nicht im Repo, siehe `.gitignore`) – **niemals echte Passwörter direkt in `compose.yaml` eintragen**, das landet sonst in der Versionskontrolle. Ohne gesetztes `ADMIN_PASSWORD` bricht der erste Start bewusst mit einer Fehlermeldung ab (danach kann es aus der `.env` entfernt werden), statt mit einem Standard-Passwort hochzufahren.
 
 Werte in `.env`:
 
@@ -38,12 +38,17 @@ Werte in `.env`:
 | `ADMIN_USER` / `ADMIN_PASSWORD` | Legen **nur beim allerersten Start** das erste Admin-Konto an (Standardname `admin`, Passwort mind. 8 Zeichen). Danach läuft alles über die Nutzerverwaltung in der App |
 | `BASE_URL` / `DOMAINS` | Legen **nur beim allerersten Start** den Startbestand der Kurz-Domain(s) an (`DOMAINS` kommagetrennt für mehrere, z. B. `https://a.tld,https://b.tld`) – **steht in den QR-Codes**, also eine Domain wählen, die dauerhaft bleibt. Danach unter „Domains“ (`/app/domains`) verwaltbar, diese Variablen werden dann ignoriert |
 | `OIDC_ISSUER_URL` / `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | Optional, aktiviert SSO-Login über einen OIDC-Provider (z. B. Authentik). Erst aktiv, wenn alle drei gesetzt sind. Redirect-URI beim Provider registrieren: `<erste konfigurierte Domain>/login/sso/callback` |
+| `BIND_ADDRESS` | Standard `127.0.0.1`: der Port ist nur auf diesem Rechner erreichbar, denn snar hat kein eigenes TLS. Ein Reverse Proxy mit HTTPS gehört davor (siehe „Wichtig zu wissen“). `0.0.0.0` veröffentlicht den Port auf allen Schnittstellen, etwa für einen Test im LAN |
+| `SESSION_SECRET` | Optional, mindestens 32 zufällige Zeichen. Hält das Secret für die Sitzungs-Cookies aus der Datenbank und ihren Backups heraus. Ohne Angabe legt snar es in der Datenbank ab. Nach einem Backup-Restore auf einem anderen System ein neues setzen |
+| `COOKIE_SECURE` | Standard `auto` (Secure-Flag nur bei erkanntem HTTPS). `always` erzwingt es, wenn TLS an einem Proxy endet, dem snar nicht vertraut |
+| `CLICK_RETENTION_DAYS` | Optional: löscht Klicks, die älter als so viele Tage sind (täglich). `0` oder leer behält alles. Die Statistik („Gesamt“, Summen) umfasst dann nur den behaltenen Zeitraum |
+| `OIDC_ALLOWED_GROUPS` / `OIDC_ALLOWED_EMAIL_DOMAINS` | Optional: nur diese SSO-Nutzer dürfen sich anmelden (eine der beiden Regeln genügt). Gruppen kommagetrennt gegen den `groups`-Claim (der Provider muss ihn liefern), E-Mail-Domänen nur mit `email_verified`. Geprüft bei jeder Anmeldung, auch bei bestehenden Konten |
 | `UPDATE_CHECK` | Standard `on`: Admins sehen unten in der Seitenleiste einen Hinweis, wenn es eine neuere Version gibt. Dafür fragt der Server alle paar Stunden die GitHub-Releases-API ab (ohne Kennung, nur mit `User-Agent: snar/<Version>`). `off` schaltet die Abfrage ganz ab |
 | `TZ` | Zeitzone für die Statistik-Diagramme (z. B. `Europe/Berlin`) – bestimmt, wo Tages-/Stundengrenzen schneiden. Gespeichert wird immer UTC |
 | `PORT` | Standard `3000` |
 | `DATA_DIR` | Standard `/data` (Volume) |
 
-Danach: `http://<server-adresse>:3000` → anmelden → Links anlegen. Für Monitoring/Reverse-Proxy-Healthchecks gibt es `GET /healthz`.
+Danach: `http://localhost:3000` (auf dem Server selbst, oder über den Reverse Proxy) → anmelden → Links anlegen. Für Monitoring/Reverse-Proxy-Healthchecks gibt es `GET /healthz`.
 
 ## Ohne Docker
 
@@ -62,6 +67,8 @@ Gemessen: Leerlauf ~66 MB RSS, unter Dauerlast ~110 MB, CPU im Leerlauf null. Ei
 
 - **Kurz-Domain nie wechseln**, sobald QR-Codes gedruckt sind – die URL ist fest im gedruckten QR-Code kodiert. Nur das *Ziel* ist dynamisch.
 - **Reverse Proxy**: `trust proxy` vertraut standardmäßig Loopback- sowie privaten/Link-lokalen Adressen (`127.0.0.1`, Docker-Bridge-Netze wie `172.16.0.0/12`, `10.0.0.0/8`, `192.168.0.0/16`, …) – deckt damit sowohl den [Betrieb ohne Docker](#ohne-docker) (Proxy nativ auf demselben Host) als auch die typische Docker-Variante ab, bei der ein Reverse Proxy als eigener Container im selben Compose-Netz läuft. Ohne diese Erkennung bliebe das `Secure`-Cookie-Flag trotz TLS-Terminierung durch den Proxy deaktiviert. Nur wenn der Proxy den Traffic über eine öffentliche Adresse einliefert (z. B. Cloudflare Tunnel, externer Load Balancer), zusätzlich `TRUSTED_PROXIES` mit der/den konkreten IP(s)/CIDR(s) setzen (kommagetrennt).
+
+  **HTTPS ist Pflicht:** snar hat kein eigenes TLS, Anmeldung und Sitzungs-Cookie würden sonst unverschlüsselt laufen. Deshalb ist der Port standardmäßig nur auf `127.0.0.1` veröffentlicht (`BIND_ADDRESS`), der Proxy erreicht ihn dort oder über das Compose-Netz. Der Proxy muss `X-Forwarded-For` und `X-Forwarded-Proto` selbst setzen (also vom Client mitgeschickte Werte überschreiben). Bei erkanntem HTTPS sendet snar `Strict-Transport-Security` und setzt das `Secure`-Flag. Veröffentlichte Docker-Ports umgehen `ufw` und `firewalld`: nicht `0.0.0.0` setzen, wenn kein Proxy davor steht.
 - **Backup**: Die SQLite-Datei läuft im WAL-Modus – ein einfaches `cp` oder ein Datei-Level-Snapshot des Docker-Volumes kann dabei eine inkonsistente Momentaufnahme erwischen (Haupt- und WAL-Datei nicht synchron), was beim Sichern unauffällig aussieht und erst beim Restore auffällt. Das Laufzeit-Image enthält kein `sqlite3`-CLI, aber `better-sqlite3`s eingebaute Online-Backup-API, die auch gegen die laufende Datenbank sicher ist:
   ```bash
   docker exec snar node -e "require('better-sqlite3')('/data/snar.db',{readonly:true}).backup('/data/backup-'+new Date().toISOString().slice(0,10)+'.db')"
@@ -73,11 +80,14 @@ Gemessen: Leerlauf ~66 MB RSS, unter Dauerlast ~110 MB, CPU im Leerlauf null. Ei
 
 ```
 src/server.js   Express-App: Auth, CRUD, Redirect, QR-Endpoints
-src/db.js       SQLite-Schema, Statements, Slug-Generierung
+src/db.js       SQLite-Schema, Statements, Passwort-Hashing, Slug-Generierung
+src/migrations.js  Nummerierte Schema-Migrationen (mit Sicherung vor dem Umbau)
+src/*.js        Kleine Module: Klick-Regeln, Login-Limit, SSO-Zugang, Update-Hinweis
+test/           Tests (`npm test`, Node-Testrunner)
 src/views.js    Server-gerenderte HTML-Templates (inkl. SVG-Chart)
 public/         Stylesheet + minimales Client-JS (Dropdowns, Datepicker, Suche, Kopieren)
-Dockerfile      node:22-alpine, mehrstufig, läuft als unprivilegierter User
-compose.yaml    Deployment mit persistentem Volume, CPU-Limit, Log-Rotation
+Dockerfile      node:22-alpine (per Digest fixiert), mehrstufig, unprivilegierter User
+compose.yaml    Deployment mit Volume, gehärtet (read-only, ohne Capabilities), Limits, Log-Rotation
 ```
 
 ## Mitmachen

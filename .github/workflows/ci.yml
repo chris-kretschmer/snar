@@ -4,15 +4,20 @@ on:
   push:
   pull_request:
 
+# The token only needs to read the code.
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
+      # Actions are pinned to a commit (the comment names the release); Dependabot keeps them current.
       - name: Check out code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
           cache: 'npm'
@@ -22,13 +27,19 @@ jobs:
 
       - name: Syntax-check all source files
         run: |
-          for f in src/*.js; do
+          for f in src/*.js public/*.js; do
             echo "Checking $f"
             node --check "$f"
           done
 
+      - name: Tests
+        run: npm test
+
+      - name: Known vulnerabilities in production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
       # A plain syntax check misses runtime errors (broken require()s,
-      # failed DB migrations on startup, etc.) – so also actually start
+      # failed DB migrations on startup, etc.) - so also actually start
       # the server and poll /healthz.
       - name: Boot smoke test (server starts, /healthz responds)
         env:
@@ -52,3 +63,6 @@ jobs:
           echo "Server did not respond in time."
           kill "$SERVER_PID" 2>/dev/null || true
           exit 1
+
+      - name: Docker image builds
+        run: docker build -t snar-ci .

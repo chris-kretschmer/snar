@@ -180,19 +180,18 @@ const NAV_GROUPS = [
 
 function navGroup(group, user, page) {
   if (group.adminOnly && user.role !== 'admin') return '';
-  const title = group.title ? `<div class="group-title">${esc(group.title)}</div>` : '';
   const links = group.items.map(n => {
     const active = (n.activeKeys || [n.key]).includes(page);
     return `<a class="navlink${active ? ' active' : ''}" href="${n.href}" title="${esc(n.label)}"${active ? ' aria-current="page"' : ''}>${icon(n.icon || n.key)}<span class="label">${esc(n.label)}</span></a>`;
   }).join('');
-  return title + links;
+  return links;
 }
 
 // Mobile bottom navigation (<=760px, see .bottom-nav in style.css); labels are
 // shorter than in the sidenav because the tabs are narrow.
 const BOTTOM_NAV_LEFT = [
-  { key: 'myvault', href: '/app/user-vault', label: 'Mein Tresor' },
-  { key: 'vault', href: '/app/org-vault', label: 'Team-Tresor' },
+  { key: 'myvault', href: '/app/user-vault', label: 'Persönlich' },
+  { key: 'vault', href: '/app/org-vault', label: 'Gemeinsam' },
 ];
 const BOTTOM_NAV_RIGHT = [
   { key: 'qr', href: '/app/qr', label: 'QR-Code' },
@@ -254,15 +253,15 @@ ${user ? `<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
     <a class="brand" href="/app">${brandInner()}</a>
   </div>
   <div class="sidebar-account">
-    <button type="button" id="account-menu-toggle" class="account-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">
+    <button type="button" id="account-menu-toggle" class="account-trigger" aria-expanded="false" aria-controls="account-menu">
       <span class="avatar">${esc(user.username.slice(0, 1).toUpperCase())}</span>
       <span class="who-chip">${esc(user.username)}</span>
       ${icon('chevron', 'chevron-icon')}
     </button>
-    <div class="account-menu" id="account-menu" role="menu">
-      <a href="/app/account" role="menuitem">${icon('person', 'menu-icon')}Dein Profil</a>
-      <a href="/app/account" role="menuitem">${icon('settings', 'menu-icon')}Einstellungen</a>
-      <form method="post" action="/logout" role="none"><button type="submit" role="menuitem">${icon('logout', 'menu-icon')}Abmelden</button></form>
+    <div class="account-menu" id="account-menu">
+      <a href="/app/account">${icon('person', 'menu-icon')}Dein Profil</a>
+      <a href="/app/account">${icon('settings', 'menu-icon')}Einstellungen</a>
+      <form method="post" action="/logout"><button type="submit">${icon('logout', 'menu-icon')}Abmelden</button></form>
     </div>
   </div>
   <nav class="sidenav">
@@ -303,7 +302,7 @@ function loginPage({ error = null, ssoEnabled = false } = {}) {
   <div class="login-divider"><span>oder</span></div>` : ''}
   <form method="post" action="/login" class="login-form">
     <div class="field">
-      <label for="username">Anmeldename</label>
+      <label for="username">Nutzername</label>
       <input id="username" name="username" type="text" autocomplete="username" spellcheck="false" required autofocus>
     </div>
     <div class="field">
@@ -390,7 +389,7 @@ function linkTableRow(l, short, { extraColumn = null } = {}) {
   ${extraColumn === 'visibility' ? `<td class="nowrap" data-label="Sichtbarkeit">${visibilityBadge(l)}</td>` : ''}
   <td class="nowrap" data-label="Status">${status}</td>
   ${extraColumn === 'owner' ? `<td class="cell-sub" data-label="Erstellt von" title="${esc(l.owner_name || '–')}">${esc(l.owner_name || '–')}</td>` : ''}
-  <td class="nowrap short-cell" data-label="Short-Link">
+  <td class="nowrap short-cell" data-label="Kurzlink">
     <button type="button" class="copy-icon-btn" data-copy="${esc(short)}" title="Link kopieren" aria-label="Link kopieren">${icon('copy', 'copy-icon')}</button>
     <a class="slug" translate="no" href="${esc(short)}" target="_blank" rel="noopener" title="${esc(stripProto(short))}">${esc(stripProto(short))}</a>
   </td>
@@ -451,7 +450,7 @@ function dashboard({ links, shortUrl, domains, user, flash, error = null, errorF
 <section>
   ${searchTable({
     links,
-    theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Sichtbarkeit</th><th>Status</th><th>Short-Link</th><th>Klicks</th><th></th>`,
+    theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Sichtbarkeit</th><th>Status</th><th>Kurzlink</th><th>Klicks</th><th></th>`,
     rowsHtml: links.map(l => linkTableRow(l, shortUrl(l), { extraColumn: 'visibility' })).join(''),
     emptyText: 'Noch keine eigenen Links. Leg oben den ersten an – der QR-Code dazu entsteht automatisch.',
   })}
@@ -466,17 +465,17 @@ function vaultPage({ links, shortUrl, user }) {
 <main>
 <div class="page">
 <div class="hero">
-  <h1>Organisations-Tresor</h1>
+  <h1>Gemeinsamer Tresor</h1>
 </div>
 ${searchTable({
     links,
-    theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Erstellt von</th><th>Short-Link</th><th>Klicks</th><th></th>`,
+    theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Erstellt von</th><th>Kurzlink</th><th>Klicks</th><th></th>`,
     rowsHtml: links.map(l => linkTableRow(l, shortUrl(l), { extraColumn: 'owner' })).join(''),
     emptyText: 'Der Tresor ist leer. Stelle einen Link auf „Organisation“, damit er hier für alle erscheint.',
   })}
 </div>
 </main>`;
-  return layout({ title: 'Organisations-Tresor', body, user, page: 'vault' });
+  return layout({ title: 'Gemeinsamer Tresor', body, user, page: 'vault' });
 }
 
 function myVaultPage({ links, shortUrl, user }) {
@@ -488,7 +487,7 @@ function myVaultPage({ links, shortUrl, user }) {
 </div>
 ${searchTable({
     links,
-    theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Short-Link</th><th>Klicks</th><th></th>`,
+    theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Kurzlink</th><th>Klicks</th><th></th>`,
     rowsHtml: links.map(l => linkTableRow(l, shortUrl(l))).join(''),
     emptyText: 'Noch keine persönlichen Links. Lege unter „Erstellen“ einen mit Sichtbarkeit „Persönlich“ an.',
   })}
@@ -661,7 +660,7 @@ function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expir
 <div class="detail-head">
   <h1 translate="no">${esc(stripProto(origin))}<span class="accent">/${esc(link.slug)}</span></h1>
   <button type="button" class="copy-icon-btn" data-copy="${esc(short)}" title="Link kopieren" aria-label="Link kopieren">${icon('copy', 'copy-icon')}</button>
-  ${expired ? `<span class="badge expired">Abgelaufen</span>` : link.expires_at ? `<span class="muted">läuft ab ${fmtDate(link.expires_at)}</span>` : ''}
+  ${expired ? `<span class="badge expired">Abgelaufen</span>` : link.expires_at ? `<span class="muted">läuft ab <time class="local-time" datetime="${parseDbDate(link.expires_at).toISOString()}">${fmtDate(link.expires_at)}</time></span>` : ''}
   <button type="submit" form="edit-form" class="head-action">Speichern</button>
 </div>
 
@@ -767,10 +766,10 @@ ${canDelete ? `
   return layout({ title: `/${link.slug}`, body, user, flash, page });
 }
 
-function colorFields(dark, light, transparentBg) {
+function colorFields(dark, light, transparentBg, lightPick = null) {
   // The native picker has no alpha (6-digit hex): #rrggbbaa is truncated for
   // display, the full value travels hidden for the download (see dlFields).
-  const lightSwatch = light.slice(0, 7);
+  const lightSwatch = lightPick || light.slice(0, 7);
   return `<div class="color-pills">
     <span class="label-inline">Farben:</span>
     <label>Vordergrund <input type="color" name="dark" value="${esc(dark)}"></label>
@@ -837,7 +836,7 @@ function qrTypePanels(v) {
     </div>
     <div class="grid-form">
       <div class="field"><label for="epc_bic">BIC <span class="muted">(optional)</span></label><input id="epc_bic" name="epc_bic" type="text" placeholder="nur außerhalb SEPA nötig…" spellcheck="false" value="${esc(v.epc_bic)}" autocomplete="off"></div>
-      <div class="field"><label for="epc_amount">Betrag (EUR) <span class="muted">(optional)</span></label><input id="epc_amount" name="epc_amount" type="number" step="0.01" min="0" value="${esc(v.epc_amount)}" autocomplete="off"></div>
+      <div class="field"><label for="epc_amount">Betrag (EUR) <span class="muted">(optional)</span></label><input id="epc_amount" name="epc_amount" type="number" step="any" value="${esc(v.epc_amount)}" autocomplete="off"></div>
       <div class="field grow"><label for="epc_purpose">Verwendungszweck <span class="muted">(optional)</span></label><input id="epc_purpose" name="epc_purpose" type="text" maxlength="140" value="${esc(v.epc_purpose)}" autocomplete="off"></div>
     </div>
   </div>`;
@@ -845,7 +844,7 @@ function qrTypePanels(v) {
 
 // Layout like linkDetail(), but the preview only appears after the first
 // "Erzeugen" click; until then the qrbox shows placeholder text.
-function staticQrPage({ content = '', ec = 'M', dark = '#000000', light = '#ffffff', transparentBg = false, svg = null, error = null, user, values = {} } = {}) {
+function staticQrPage({ content = '', ec = 'M', dark = '#000000', light = '#ffffff', lightPick = null, transparentBg = false, svg = null, error = null, user, values = {} } = {}) {
   const v = {
     type: 'url', data: '', url_value: '', wlan_ssid: '', wlan_pass: '', wlan_enc: 'WPA',
     epc_name: '', epc_iban: '', epc_bic: '', epc_amount: '', epc_purpose: '',
@@ -881,7 +880,7 @@ function staticQrPage({ content = '', ec = 'M', dark = '#000000', light = '#ffff
     ${qrTypeTabs(v.type)}
     ${qrTypePanels(v)}
     <div class="radio-row">
-      ${colorFields(dark, light, transparentBg)}
+      ${colorFields(dark, light, transparentBg, lightPick)}
     </div>
   </form>
 </section>
@@ -895,7 +894,7 @@ function userTableRow(u, currentUser) {
   const searchHay = esc(u.username).toLowerCase();
   return `
 <tr data-search="${searchHay}">
-  <td class="cell-sub" data-label="Anmeldename" title="${esc(u.username)}">${esc(u.username)}</td>
+  <td class="cell-sub" data-label="Nutzername" title="${esc(u.username)}">${esc(u.username)}</td>
   <td data-label="Rolle"><span class="badge${u.role === 'admin' ? '' : ' muted'}">${u.role === 'admin' ? 'Admin' : 'Mitglied'}</span></td>
   <td class="muted nowrap" data-label="Erstellt am">${fmtDate(u.created_at)}</td>
   <td class="muted nowrap" data-label="Letzter Login am">${fmtDate(u.last_login_at)}</td>
@@ -926,7 +925,7 @@ function adminTabs(page) {
 
 // error/errorField/values: see dashboard(). The password is deliberately never
 // part of `values` – not re-echoed into the form.
-function usersPage({ users, user, flash, error = null, errorField = null, values = {} }) {
+function usersPage({ users, ssoBlocked = [], user, flash, error = null, errorField = null, values = {} }) {
   const v = { username: '', role: 'member', ...values };
   const body = `
 <main>
@@ -935,7 +934,7 @@ function usersPage({ users, user, flash, error = null, errorField = null, values
 ${adminTabs('users')}
 
 <section class="card">
-  <h2>Account anlegen</h2>
+  <h2>Konto anlegen</h2>
   ${error && !errorField ? `<div class="flash error">${esc(error)}</div>` : ''}
   <form method="post" action="/app/users" class="grid-form">
     <div class="field">
@@ -960,16 +959,29 @@ ${adminTabs('users')}
 </section>
 
 <section>
-  <h2>Alle Accounts</h2>
+  <h2>Alle Konten</h2>
   ${searchTable({
     links: users,
-    theadHtml: `<th>Anmeldename</th><th>Rolle</th><th>Erstellt am</th><th>Letzter Login am</th><th>Links</th><th></th>`,
+    theadHtml: `<th>Nutzername</th><th>Rolle</th><th>Erstellt am</th><th>Letzter Login am</th><th>Links</th><th></th>`,
     rowsHtml: users.map(u => userTableRow(u, user)).join(''),
-    emptyText: 'Keine Accounts vorhanden.',
+    emptyText: 'Keine Konten vorhanden.',
   })}
 </section>
+${ssoBlocked.length ? `
+<section class="card">
+  <h2>Gesperrte SSO-Zugänge</h2>
+  <p class="muted hint">Gelöschte SSO-Konten können sich nicht erneut anmelden, bis du sie hier freigibst. Bei der nächsten Anmeldung entsteht dann ein neues, leeres Konto.</p>
+  <div class="table-scroll"><table class="tbl">
+    <thead><tr><th>Nutzername</th><th class="th-date">Gesperrt am</th><th class="th-narrow"></th></tr></thead>
+    <tbody>${ssoBlocked.map(b => `<tr>
+      <td>${esc(b.username)}</td>
+      <td class="cell-sub">${fmtDate(b.blocked_at)}</td>
+      <td><form method="post" action="/app/users/sso-blocked/${b.id}/unblock"><button class="ghost" type="submit">Freigeben</button></form></td>
+    </tr>`).join('')}</tbody>
+  </table></div>
+</section>` : ''}
 <dialog id="delete-user-dialog" class="confirm-dialog" data-users='${esc(JSON.stringify(users.map(u => ({ id: u.id, username: u.username }))))}' data-current-user="${user.id}">
-  <h3>Account löschen</h3>
+  <h3>Konto löschen</h3>
   <p class="confirm-dialog-text"></p>
   <div class="grid-form mb-20">
     <div class="field grow">
@@ -991,9 +1003,8 @@ ${adminTabs('users')}
 // but the domain here is plain text. isDefault only matters with more than one
 // domain (drives the badge and "Als Standard setzen").
 function domainTableRow(d, isDefault, showDefaultControl) {
-  const searchHay = esc(stripProto(d.origin)).toLowerCase();
   return `
-<tr data-search="${searchHay}">
+<tr>
   <td class="cell-sub" data-label="Domain" title="${esc(stripProto(d.origin))}">${esc(stripProto(d.origin))}${isDefault && showDefaultControl ? ' <span class="badge">Standard</span>' : ''}</td>
   <td class="muted nowrap" data-label="Hinzugefügt am">${fmtDate(d.created_at)}</td>
   <td class="num-cell" data-label="Links">${fmtNum(d.links_count)}</td>
@@ -1003,7 +1014,7 @@ function domainTableRow(d, isDefault, showDefaultControl) {
       ${!isDefault && showDefaultControl ? `<form method="post" action="/app/domains/${d.id}/set-default">
         <button class="btn ghost" type="submit">Als Standard setzen</button>
       </form>` : ''}
-      <form method="post" action="/app/domains/${d.id}/delete" data-confirm-modal="${esc(`„${stripProto(d.origin)}“ wird entfernt. Alle Links, die aktuell darüber laufen, werden automatisch auf eine andere konfigurierte Domain umgestellt. Kein gedruckter QR-Code bricht dadurch, der Redirect selbst prüft die Domain ohnehin nicht. Diese Aktion lässt sich nicht rückgängig machen.`)}">
+      <form method="post" action="/app/domains/${d.id}/delete" data-confirm-modal="${esc(`„${stripProto(d.origin)}“ wird entfernt. Alle Links, die aktuell darüber laufen, ${showDefaultControl ? "werden automatisch auf eine andere konfigurierte Domain umgestellt" : "nutzen danach die Adresse, unter der die Seite aufgerufen wird"}. Kein gedruckter QR-Code bricht dadurch, der Redirect selbst prüft die Domain ohnehin nicht. Diese Aktion lässt sich nicht rückgängig machen.`)}">
         <button class="destructive-ghost" type="submit" disabled data-needs-js>Entfernen</button>
       </form>
     </div>
@@ -1064,6 +1075,30 @@ ${adminTabs('design')}
   return layout({ title: 'Darstellung', body, user, flash, page: 'design', scripts: `<script src="${THEME_JS_URL}"></script>\n` });
 }
 
+const ERROR_TITLES = { 400: 'Ungültige Anfrage', 403: 'Kein Zugriff', 404: 'Nicht gefunden', 410: 'Nicht mehr verfügbar', 500: 'Interner Fehler' };
+function errorPage({ status, message, user = null }) {
+  const title = ERROR_TITLES[status] || 'Fehler';
+  const body = user
+    ? `
+<main>
+<div class="page">
+<h1>${esc(title)}</h1>
+<p class="muted">${esc(message)}</p>
+<p><a class="btn ghost" href="/app">Zur Übersicht</a></p>
+</div>
+</main>`
+    : `
+<main class="login-shell">
+<div class="login-card">
+  <h1 class="login-brand">${brandInner()}</h1>
+  <h2>${esc(title)}</h2>
+  <h3>${esc(message)}</h3>
+  <a class="login-sso-btn" href="/login">Zur Anmeldung</a>
+</div>
+</main>`;
+  return layout({ title, body, user });
+}
+
 function domainsPage({ domains, user, flash, error = null, errorField = null, values = {} }) {
   const v = { origin: '', ...values };
   const body = `
@@ -1105,7 +1140,7 @@ function accountPage({ user, flash }) {
 <section class="card card-narrow">
   <h2>Passwort ändern</h2>
   ${user.sso_subject ? `
-  <p class="muted prose">Dieser Account ist über SSO angebunden, das Passwort wird bei deinem Identity Provider verwaltet, nicht in ${esc(themeName)}.</p>` : `
+  <p class="muted prose">Dieses Konto ist über SSO angebunden, das Passwort wird bei deinem Identity Provider verwaltet, nicht in ${esc(themeName)}.</p>` : `
   <form id="password-form" method="post" action="/app/account/password" class="stack">
     <div><label for="cp">Aktuelles Passwort</label>
     <input id="cp" name="current" type="password" autocomplete="current-password" required></div>
@@ -1128,4 +1163,4 @@ function accountPage({ user, flash }) {
   return layout({ title: 'Konto', body, user, flash, page: 'account' });
 }
 
-module.exports = { designPage, setTheme, getThemeCss, setUpdateInfo, loginPage, dashboard, vaultPage, myVaultPage, linkDetail, staticQrPage, usersPage, domainsPage, accountPage, isExpired, CSS_CONTENT };
+module.exports = { errorPage, designPage, setTheme, getThemeCss, setUpdateInfo, loginPage, dashboard, vaultPage, myVaultPage, linkDetail, staticQrPage, usersPage, domainsPage, accountPage, isExpired, CSS_CONTENT };

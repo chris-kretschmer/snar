@@ -5,9 +5,14 @@ const fs = require('fs');
 const { migrate } = require('./migrations');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
+// The database holds password hashes and the session secret, backups included: new files are
+// readable by the owner only (0600, directories 0700).
+process.umask(0o077);
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
-const db = new Database(path.join(DATA_DIR, 'snar.db'));
+const DB_FILE = path.join(DATA_DIR, 'snar.db');
+const db = new Database(DB_FILE);
+try { fs.chmodSync(DB_FILE, 0o600); } catch { /* e.g. Windows or a mount without permissions */ }
 db.pragma('journal_mode = WAL');
 db.pragma('synchronous = NORMAL'); // safe in combination with WAL, saves an fsync per write
 db.pragma('foreign_keys = ON');
@@ -99,6 +104,12 @@ migrate(db, { dataDir: DATA_DIR });
 // Session secret (persisted so logins survive restarts)
 // ---------------------------------------------------------------------------
 function getSessionSecret() {
+  // SESSION_SECRET keeps the secret out of the database (and its backups); at least 32 characters.
+  const fromEnv = process.env.SESSION_SECRET;
+  if (fromEnv) {
+    if (fromEnv.length < 32) throw new Error('SESSION_SECRET muss mindestens 32 Zeichen lang sein.');
+    return fromEnv;
+  }
   const row = db.prepare(`SELECT value FROM meta WHERE key = 'session_secret'`).get();
   if (row) return row.value;
   const secret = crypto.randomBytes(32).toString('hex');
@@ -124,38 +135,71 @@ function setThemeSetting(key, value) {
 // ---------------------------------------------------------------------------
 // Passwords: scrypt (Node built-in, no bcrypt package needed)
 // ---------------------------------------------------------------------------
+// Format: scrypt$N$r$p$salt$hash (hex). The parameters travel with the hash, so the cost can be raised later
+// and old hashes are re-hashed on the next login. Older hashes have the form "salt:hash" (N=16384, r=8, p=1).
+// N=2^15, r=8, p=3 is one of the equivalent scrypt settings in the OWASP password storage cheat sheet (32 MB).
+const SCRYPT = { N: 1 << 15, r: 8, p: 3 };
+const SCRYPT_LEGACY = { N: 1 << 14, r: 8, p: 1 };
+const SCRYPT_MAXMEM = 256 * 1024 * 1024;
+
+const scryptAsync = (pw, salt, { N, r, p }) => new Promise((resolve, reject) => {
+  crypto.scrypt(pw, salt, 32, { N, r, p, maxmem: SCRYPT_MAXMEM }, (err, key) => (err ? reject(err) : resolve(key)));
+});
+const encodeHash = ({ N, r, p }, salt, hash) => `scrypt$${N}$${r}$${p}$${salt.toString('hex')}$${hash.toString('hex')}`;
+
+function parseHash(stored) {
+  const value = String(stored || '');
+  if (value.startsWith('scrypt$')) {
+    const [, N, r, p, saltHex, hashHex] = value.split('$');
+    if (![N, r, p].every((n) => /^\d+$/.test(n)) || !/^[0-9a-f]+$/i.test(saltHex || '') || !/^[0-9a-f]+$/i.test(hashHex || '')) return null;
+    return { params: { N: Number(N), r: Number(r), p: Number(p) }, salt: Buffer.from(saltHex, 'hex'), hash: Buffer.from(hashHex, 'hex') };
+  }
+  const [saltHex, hashHex] = value.split(':');
+  if (!saltHex || !hashHex || !/^[0-9a-f]+$/i.test(saltHex) || !/^[0-9a-f]+$/i.test(hashHex)) return null;
+  return { params: SCRYPT_LEGACY, salt: Buffer.from(saltHex, 'hex'), hash: Buffer.from(hashHex, 'hex') };
+}
+
+// Startup only (first admin, dummy hash): request handlers use the async variants below.
 function hashPassword(pw) {
   const salt = crypto.randomBytes(16);
-  const hash = crypto.scryptSync(pw, salt, 32);
-  return `${salt.toString('hex')}:${hash.toString('hex')}`;
+  return encodeHash(SCRYPT, salt, crypto.scryptSync(pw, salt, 32, { ...SCRYPT, maxmem: SCRYPT_MAXMEM }));
 }
 
-function verifyPassword(pw, stored) {
-  const [saltHex, hashHex] = String(stored || '').split(':');
-  if (!saltHex || !hashHex) {
-    // SSO accounts have no hash: do the same scrypt work anyway, so the response time does not tell
-    // them apart from local accounts.
-    crypto.scryptSync(pw, Buffer.alloc(16), 32);
+async function hashPasswordAsync(pw) {
+  const salt = crypto.randomBytes(16);
+  return encodeHash(SCRYPT, salt, await scryptAsync(pw, salt, SCRYPT));
+}
+
+// Never blocks the event loop. Accounts without a (valid) hash, such as SSO accounts, get the same
+// scrypt work, so the response time does not tell them apart from local accounts.
+async function verifyPasswordAsync(pw, stored) {
+  const parsed = parseHash(stored);
+  if (!parsed) {
+    await scryptAsync(pw, Buffer.alloc(16), SCRYPT);
     return false;
   }
-  const hash = crypto.scryptSync(pw, Buffer.from(saltHex, 'hex'), 32);
-  const expected = Buffer.from(hashHex, 'hex');
-  return hash.length === expected.length && crypto.timingSafeEqual(hash, expected);
+  const hash = await scryptAsync(pw, parsed.salt, parsed.params);
+  return hash.length === parsed.hash.length && crypto.timingSafeEqual(hash, parsed.hash);
 }
 
-// Shared base for the "links + owner name + click count" queries below;
+function needsRehash(stored) {
+  const parsed = parseHash(stored);
+  return !!parsed && (parsed.params.N !== SCRYPT.N || parsed.params.r !== SCRYPT.r || parsed.params.p !== SCRYPT.p);
+}
+
+// Shared base for the "links + owner name" queries below (the click count is the trigger-maintained
+// links.clicks_total column, see migrations.js);
 // only WHERE/ORDER BY differ.
 const LINKS_BASE = `
-  SELECT l.*, u.username AS owner_name, COUNT(c.id) AS clicks_total
+  SELECT l.*, u.username AS owner_name
   FROM links l
   LEFT JOIN users u ON u.id = l.owner_id
-  LEFT JOIN clicks c ON c.link_id = l.id
 `;
 
 const stmts = {
   insertUser: db.prepare(`INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)`),
   insertSsoUser: db.prepare(`INSERT INTO users (username, password_hash, role, sso_subject) VALUES (?, '', 'member', ?)`),
-  userByName: db.prepare(`SELECT * FROM users WHERE username = ?`),
+  userByName: db.prepare(`SELECT * FROM users WHERE username = ? COLLATE NOCASE`),
   userById: db.prepare(`SELECT * FROM users WHERE id = ?`),
   userBySsoSubject: db.prepare(`SELECT * FROM users WHERE sso_subject = ?`),
   listUsers: db.prepare(`
@@ -186,11 +230,11 @@ const stmts = {
     SELECT la.*, u.username FROM link_audit la LEFT JOIN users u ON u.id = la.user_id
     WHERE la.link_id = ? ORDER BY la.ts DESC LIMIT 25
   `),
-  linksByOwner: db.prepare(`${LINKS_BASE} WHERE l.owner_id = ? GROUP BY l.id ORDER BY l.created_at DESC`),
+  linksByOwner: db.prepare(`${LINKS_BASE} WHERE l.owner_id = ? ORDER BY l.created_at DESC`),
   // Personal vault: own links with visibility "privat" only.
-  linksByOwnerPrivate: db.prepare(`${LINKS_BASE} WHERE l.owner_id = ? AND l.visibility = 'privat' GROUP BY l.id ORDER BY l.created_at DESC`),
+  linksByOwnerPrivate: db.prepare(`${LINKS_BASE} WHERE l.owner_id = ? AND l.visibility = 'privat' ORDER BY l.created_at DESC`),
   // Includes click counts: any member may open an org link's full stats (see canManage in server.js).
-  vaultLinks: db.prepare(`${LINKS_BASE} WHERE l.visibility = 'org' GROUP BY l.id ORDER BY l.title COLLATE NOCASE, l.slug`),
+  vaultLinks: db.prepare(`${LINKS_BASE} WHERE l.visibility = 'org' ORDER BY l.title COLLATE NOCASE, l.slug`),
 
   // Domains (admin-only, /app/domains): lowest sort_order = default domain, id as tiebreaker.
   listDomains: db.prepare(`
@@ -211,6 +255,13 @@ const stmts = {
   setDefaultDomain: db.prepare(`UPDATE domains SET sort_order = (SELECT MIN(sort_order) - 1 FROM domains) WHERE id = ?`),
   reassignLinkDomain: db.prepare(`UPDATE links SET domain = ? WHERE domain = ?`),
 
+  // SSO subjects of deleted accounts (see deleteUserAndReassign): a login with one of them is refused.
+  ssoBlockedBySubject: db.prepare(`SELECT * FROM sso_blocked WHERE subject = ?`),
+  listSsoBlocked: db.prepare(`SELECT rowid AS id, subject, username, blocked_at FROM sso_blocked ORDER BY blocked_at DESC, rowid DESC`),
+  insertSsoBlocked: db.prepare(`INSERT OR REPLACE INTO sso_blocked (subject, username) VALUES (?, ?)`),
+  deleteSsoBlocked: db.prepare(`DELETE FROM sso_blocked WHERE rowid = ?`),
+  // Retention (CLICK_RETENTION_DAYS): the delete trigger keeps links.clicks_total in step.
+  deleteClicksOlderThan: db.prepare(`DELETE FROM clicks WHERE ts < datetime('now', ?)`),
   insertClick: db.prepare(`INSERT INTO clicks (link_id, referrer, device, browser, lang) VALUES (?, ?, ?, ?, ?)`),
   // Buckets in server local time ('localtime', TZ set in the container) so
   // "today" starts at local midnight; storage stays UTC, window starts are
@@ -334,18 +385,53 @@ function provisionSsoUser({ subject, preferredUsername }) {
 // afterwards managed via /app/domains.
 // ---------------------------------------------------------------------------
 function seedDomainsIfEmpty(origins) {
+  // Only on the very first start: a flag in meta remembers it, so deleting the last domain and
+  // restarting does not bring the one from the environment back.
+  if (db.prepare(`SELECT 1 FROM meta WHERE key = 'domains_seeded'`).get()) return;
+  db.prepare(`INSERT INTO meta (key, value) VALUES ('domains_seeded', '1')`).run();
   if (stmts.listDomains.all().length > 0) return;
   for (const o of origins) {
     if (o && !stmts.domainExists.get(o)) stmts.insertDomain.run(o);
   }
 }
 
-// Hand the user's links to `recipientId`, detach their change-log entries and
-// delete the account – all or nothing.
+// Hand the user's links to `recipientId`, detach their change-log entries and delete the account,
+// all or nothing. The SSO subject of a deleted SSO account is blocked: the next SSO login would
+// otherwise create the account again.
 const deleteUserAndReassign = db.transaction((userId, recipientId) => {
+  const user = stmts.userById.get(userId);
+  if (user && user.sso_subject) stmts.insertSsoBlocked.run(user.sso_subject, user.username);
   stmts.reassignLinks.run(recipientId, userId);
   stmts.clearAuditUser.run(userId);
   stmts.deleteUser.run(userId);
 });
 
-module.exports = { stmts, deleteUserAndReassign, createLink, getSessionSecret, getThemeSetting, setThemeSetting, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty };
+// Change-log entry and update in one step (a failing update must not leave an entry for a change that never happened).
+const updateLinkWithAudit = db.transaction(({ id, userId, oldUrl, newUrl, title, visibility, domain, expiresAt }) => {
+  if (newUrl !== oldUrl) stmts.insertLinkAudit.run(id, userId, oldUrl, newUrl);
+  stmts.updateLink.run(newUrl, title, visibility, domain, expiresAt, id);
+});
+
+const deleteDomainAndReassign = db.transaction((domainId, origin, fallback) => {
+  stmts.reassignLinkDomain.run(fallback, origin);
+  stmts.deleteDomain.run(domainId);
+});
+
+function deleteClicksOlderThanDays(days) {
+  return stmts.deleteClicksOlderThan.run(`-${Math.floor(days)} days`).changes;
+}
+
+// For /healthz: proves the database answers, not only the process.
+function dbPing() {
+  return db.prepare('SELECT 1 AS ok').get().ok === 1;
+}
+
+function closeDb() {
+  try { db.close(); } catch { /* already closed */ }
+}
+
+module.exports = {
+  stmts, deleteUserAndReassign, updateLinkWithAudit, deleteDomainAndReassign, deleteClicksOlderThanDays, createLink,
+  getSessionSecret, getThemeSetting, setThemeSetting, hashPassword, hashPasswordAsync, verifyPasswordAsync, needsRehash,
+  bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty, dbPing, closeDb,
+};

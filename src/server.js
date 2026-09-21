@@ -9,9 +9,16 @@ const QRCode = require('qrcode');
 const oidc = require('openid-client');
 
 const Theme = require('../public/theme-shared.js');
-const { stmts, deleteUserAndReassign, createLink, getSessionSecret, getThemeSetting, setThemeSetting, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty } = require('./db');
+const {
+  stmts, deleteUserAndReassign, updateLinkWithAudit, deleteDomainAndReassign, deleteClicksOlderThanDays, createLink,
+  getSessionSecret, getThemeSetting, setThemeSetting, hashPassword, hashPasswordAsync, verifyPasswordAsync, needsRehash,
+  bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty, dbPing, closeDb,
+} = require('./db');
 const views = require('./views');
 const { startUpdateCheck } = require('./updates');
+const { createClickCounter } = require('./click-rules');
+const { createLoginLimiter } = require('./login-limiter');
+const { createSsoAccess } = require('./sso-access');
 const { isExpired } = views;
 
 const PORT = Number(process.env.PORT || 3000);
@@ -62,7 +69,10 @@ seedDomainsIfEmpty(
 );
 
 const SECRET = getSessionSecret();
-const RESERVED = new Set(['app', 'login', 'logout', 'static', 'favicon.ico', 'robots.txt', 'healthz']);
+
+// Express 4 does not catch rejections of async handlers: route them to the error middleware.
+const asyncRoute = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const RESERVED = new Set(['app', 'login', 'logout', 'static', 'healthz']);
 
 // Random per-process id (not a secret): lets "Domain testen" tell this snar instance
 // apart from any other server answering on the domain.
@@ -121,6 +131,7 @@ app.use((req, res, next) => {
   res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'");
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (req.secure) res.setHeader('Strict-Transport-Security', 'max-age=31536000'); // only over TLS (req.secure honors trust proxy)
   if (req.path === '/app' || req.path.startsWith('/app/')) res.setHeader('Cache-Control', 'no-store');
   next();
 });
@@ -156,10 +167,14 @@ function makeSessionCookie(userId, tokenVersion) {
   return `${payload}.${sign(payload)}`;
 }
 
+// COOKIE_SECURE=always forces the Secure flag even if TLS ends at a proxy this server does not trust
+// (then req.secure is false although the browser talks HTTPS).
+const cookieSecure = (req) => (req.secure || /^(always|on|true|1)$/i.test(process.env.COOKIE_SECURE || '') ? '; Secure' : '');
+
 // Login + after a password change. Secure only over TLS (req.secure honors trust proxy).
 function setSessionCookie(res, req, user) {
   res.setHeader('Set-Cookie',
-    `snar_session=${makeSessionCookie(user.id, user.token_version)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${60 * 60 * 24 * 30}${req.secure ? '; Secure' : ''}`);
+    `snar_session=${makeSessionCookie(user.id, user.token_version)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${60 * 60 * 24 * 30}${cookieSecure(req)}`);
 }
 
 // Returns the payload if the HMAC signature is valid (constant-time); shared by sessionUser and verifyOidcState.
@@ -216,31 +231,15 @@ function requireAuth(req, res, next) {
   next();
 }
 
-function requireAdmin(req, res, next) {
-  if (req.user.role !== 'admin') return res.status(403).send('Nur für Admins.');
-  next();
+// One look for every error that is not a form re-render: a small page instead of bare text.
+function sendError(req, res, status, message) {
+  const user = req.user || sessionUser(getCookie(req, 'snar_session'));
+  res.status(status).send(views.errorPage({ status, message, user }));
 }
 
-// Login rate limit (in-memory). Counts only FAILED attempts so users behind one NAT do not lock
-// each other out. Keys "ip:..." and "user:..." (see POST /login) cover username enumeration
-// from one IP as well as IP rotation.
-const loginAttempts = new Map();
-function rateLimited(key) {
-  const entry = loginAttempts.get(key);
-  if (!entry) return false;
-  if (Date.now() > entry.reset) { loginAttempts.delete(key); return false; }
-  return entry.count >= 10;
-}
-function noteFailedLogin(key) {
-  const now = Date.now();
-  // Purge expired entries, or many (spoofed) IPs would grow the map unbounded.
-  if (loginAttempts.size >= 1000) {
-    for (const [k, e] of loginAttempts) if (now > e.reset) loginAttempts.delete(k);
-  }
-  const entry = loginAttempts.get(key) || { count: 0, reset: now + 15 * 60 * 1000 };
-  if (now > entry.reset) { entry.count = 0; entry.reset = now + 15 * 60 * 1000; }
-  entry.count++;
-  loginAttempts.set(key, entry);
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') return sendError(req, res, 403, 'Nur für Admins.');
+  next();
 }
 
 // Own domain, else first configured, else the current request host.
@@ -320,21 +319,37 @@ function dayMonthFormatter() {
   };
 }
 
+// Bucket keys as the SQL side builds them (server local time), and the two long date formats used for hover labels.
+const monthKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+const dayKey = (d) => `${monthKey(d)}-${pad2(d.getDate())}`;
+const hourKey = (d) => `${dayKey(d)} ${pad2(d.getHours())}`;
+const fmtDateLong = (d) => d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+const fmtMonthLong = (d) => d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+
+// Shared tail of every range: database rows (looked up by rows[].rowKey) become a gap-free values array over
+// `dates`, plus sparse axis labels and the unthinned labels for the hover tooltip.
+function bucketSeries({ label, dates, rows, rowKey, keyOf, step, axisLabel, pointLabel, forceLast = true }) {
+  const byKey = new Map(rows.map((r) => [r[rowKey], r.n]));
+  return {
+    label,
+    values: dates.map((d) => byKey.get(keyOf(d)) || 0),
+    labels: sparseLabels(dates, step, axisLabel, forceLast),
+    pointLabels: dates.map(pointLabel),
+  };
+}
+
 function statsRangeHourly(linkId) {
-  const rows = stmts.clicksPerHourToday.all(linkId);
-  const map = new Map(rows.map(r => [Number(r.hour), r.n]));
-  const values = Array.from({ length: 24 }, (_, h) => map.get(h) || 0);
   const hours = Array.from({ length: 24 }, (_, h) => h);
-  const labels = sparseLabels(hours, 4, h => String(h), false);
-  if (labels.length) labels[labels.length - 1].text += ' Uhr'; // the last shown point gets context
-  // Unthinned labels for the hover tooltip.
-  const pointLabels = Array.from({ length: 24 }, (_, h) => `${pad2(h)}:00 Uhr`);
-  return { label: 'heute', values, labels, pointLabels };
+  const series = bucketSeries({
+    label: 'heute', dates: hours,
+    rows: stmts.clicksPerHourToday.all(linkId).map((r) => ({ hour: Number(r.hour), n: r.n })), rowKey: 'hour', keyOf: (h) => h,
+    step: 4, axisLabel: (h) => String(h), pointLabel: (h) => `${pad2(h)}:00 Uhr`, forceLast: false,
+  });
+  if (series.labels.length) series.labels[series.labels.length - 1].text += ' Uhr'; // the last shown point gets context
+  return series;
 }
 
 function statsRangeDaily(linkId, days) {
-  const rows = stmts.clicksPerDay.all(linkId, `-${days - 1} days`);
-  const map = new Map(rows.map(r => [r.day, r.n]));
   const dates = [];
   const today = new Date();
   for (let i = days - 1; i >= 0; i--) {
@@ -342,30 +357,28 @@ function statsRangeDaily(linkId, days) {
     d.setDate(d.getDate() - i);
     dates.push(d);
   }
-  const values = dates.map(d => map.get(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`) || 0);
   const weekly = days <= 7;
   const dayMonth = dayMonthFormatter();
-  const labels = sparseLabels(dates, weekly ? 1 : 5,
-    d => weekly ? d.toLocaleDateString('de-DE', { weekday: 'short' }) : dayMonth(d));
-  const pointLabels = dates.map(d => d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }));
-  return { label: weekly ? 'letzte 7 Tage' : 'letzte 30 Tage', values, labels, pointLabels };
+  return bucketSeries({
+    label: weekly ? 'letzte 7 Tage' : 'letzte 30 Tage', dates,
+    rows: stmts.clicksPerDay.all(linkId, `-${days - 1} days`), rowKey: 'day', keyOf: dayKey,
+    step: weekly ? 1 : 5, axisLabel: (d) => (weekly ? d.toLocaleDateString('de-DE', { weekday: 'short' }) : dayMonth(d)), pointLabel: fmtDateLong,
+  });
 }
 
 // label/step/formatFn are parameters so statsRangeAll() can reuse this for more than 12 months.
 function statsRangeMonthly(linkId, months, { label = 'letzte 12 Monate', step = 2, formatFn } = {}) {
-  const rows = stmts.clicksPerMonth.all(linkId, `-${months - 1} months`);
-  const map = new Map(rows.map(r => [r.month, r.n]));
-  const dates = [];
   const today = new Date();
-  for (let i = months - 1; i >= 0; i--) {
-    dates.push(new Date(today.getFullYear(), today.getMonth() - i, 1));
-  }
-  const values = dates.map(d => map.get(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}`) || 0);
-  const labels = sparseLabels(dates, step, formatFn || (d => d.toLocaleDateString('de-DE', { month: 'short' })));
-  const pointLabels = dates.map(d => d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }));
+  const dates = [];
+  for (let i = months - 1; i >= 0; i--) dates.push(new Date(today.getFullYear(), today.getMonth() - i, 1));
+  const series = bucketSeries({
+    label, dates,
+    rows: stmts.clicksPerMonth.all(linkId, `-${months - 1} months`), rowKey: 'month', keyOf: monthKey,
+    step, axisLabel: formatFn || ((d) => d.toLocaleDateString('de-DE', { month: 'short' })), pointLabel: fmtMonthLong,
+  });
   // The last bucket is the running month: chart draws it dashed, tooltip says "(bisher)".
-  pointLabels[pointLabels.length - 1] += ' (bisher)';
-  return { label, values, labels, pointLabels, partialLast: true };
+  series.pointLabels[series.pointLabels.length - 1] += ' (bisher)';
+  return { ...series, partialLast: true };
 }
 
 // "Gesamt": monthly over the whole lifetime, ~6 labels; with the year once lifetime > 1 year
@@ -402,44 +415,45 @@ function isValidDateStr(s) {
 function statsRangeCustom(linkId, fromStr, toStr) {
   const toExclusive = addDaysStr(toStr, 1);
   const spanDays = Math.round((new Date(toExclusive + 'T00:00:00Z') - new Date(fromStr + 'T00:00:00Z')) / 86400000);
-  const fmtFull = (s) => new Date(s + 'T00:00:00Z').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
+  const fmtFull = (str) => new Date(str + 'T00:00:00Z').toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
   const label = fromStr === toStr ? fmtFull(fromStr) : `${fmtFull(fromStr)} – ${fmtFull(toStr)}`;
+  const localDay = (i) => {
+    const [y, m, d] = addDaysStr(fromStr, i).split('-').map(Number);
+    return [y, m, d];
+  };
 
   if (spanDays <= 3) {
-    const rows = stmts.clicksPerHourInRange.all(linkId, fromStr, toExclusive);
-    const map = new Map(rows.map(r => [r.bucket, r.n]));
-    const hourKey = (dt) => `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())} ${pad2(dt.getHours())}`;
     const hours = [];
     const seen = new Set();
     for (let i = 0; i < spanDays; i++) {
-      const [y, m, d] = addDaysStr(fromStr, i).split('-').map(Number);
+      const [y, m, d] = localDay(i);
       for (let h = 0; h < 24; h++) {
         const dt = new Date(y, m - 1, d, h);
-        // Spring-forward day: hour 02 rolls over to 03:00 and would count twice – skip repeats.
+        // Spring-forward day: hour 02 rolls over to 03:00 and would count twice, skip repeats.
         if (seen.has(hourKey(dt))) continue;
         seen.add(hourKey(dt));
         hours.push(dt);
       }
     }
-    const values = hours.map(dt => map.get(hourKey(dt)) || 0);
-    const labels = sparseLabels(hours, Math.max(1, Math.round(hours.length / 8)), dt => `${pad2(dt.getHours())}:00`);
-    const pointLabels = hours.map(dt => `${dt.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} ${pad2(dt.getHours())}:00 Uhr`);
-    return { label, values, labels, pointLabels };
+    return bucketSeries({
+      label, dates: hours,
+      rows: stmts.clicksPerHourInRange.all(linkId, fromStr, toExclusive), rowKey: 'bucket', keyOf: hourKey,
+      step: Math.max(1, Math.round(hours.length / 8)), axisLabel: (dt) => `${pad2(dt.getHours())}:00`,
+      pointLabel: (dt) => `${dt.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })} ${pad2(dt.getHours())}:00 Uhr`,
+    });
   }
 
   if (spanDays <= 92) {
     const days = Array.from({ length: spanDays }, (_, i) => {
-      const [y, m, d] = addDaysStr(fromStr, i).split('-').map(Number);
+      const [y, m, d] = localDay(i);
       return new Date(y, m - 1, d);
     });
-    const rows = stmts.clicksPerDayInRange.all(linkId, fromStr, toExclusive);
-    const map = new Map(rows.map(r => [r.day, r.n]));
-    const values = days.map(d => map.get(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`) || 0);
-    const step = spanDays <= 7 ? 1 : Math.max(1, Math.round(spanDays / 6));
     const dayMonth = dayMonthFormatter();
-    const labels = sparseLabels(days, step, d => dayMonth(d));
-    const pointLabels = days.map(d => d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }));
-    return { label, values, labels, pointLabels };
+    return bucketSeries({
+      label, dates: days,
+      rows: stmts.clicksPerDayInRange.all(linkId, fromStr, toExclusive), rowKey: 'day', keyOf: dayKey,
+      step: spanDays <= 7 ? 1 : Math.max(1, Math.round(spanDays / 6)), axisLabel: (d) => dayMonth(d), pointLabel: fmtDateLong,
+    });
   }
 
   // Beyond ~3 months: monthly buckets, same shape as statsRangeMonthly/-All.
@@ -450,17 +464,17 @@ function statsRangeCustom(linkId, fromStr, toStr) {
     const total = (fm - 1) + i;
     return new Date(fy + Math.floor(total / 12), total % 12, 1);
   });
-  const rows = stmts.clicksPerMonthInRange.all(linkId, fromStr, toExclusive);
-  const map = new Map(rows.map(r => [r.month, r.n]));
-  const values = months.map(d => map.get(`${d.getFullYear()}-${pad2(d.getMonth() + 1)}`) || 0);
-  const step = Math.max(1, Math.round(monthCount / 6));
-  const formatFn = d => d.toLocaleDateString('de-DE', monthCount > 12 ? { month: 'short', year: '2-digit' } : { month: 'short' });
-  const labels = sparseLabels(months, step, formatFn);
-  const pointLabels = months.map(d => d.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' }));
+  const series = bucketSeries({
+    label, dates: months,
+    rows: stmts.clicksPerMonthInRange.all(linkId, fromStr, toExclusive), rowKey: 'month', keyOf: monthKey,
+    step: Math.max(1, Math.round(monthCount / 6)),
+    axisLabel: (d) => d.toLocaleDateString('de-DE', monthCount > 12 ? { month: 'short', year: '2-digit' } : { month: 'short' }),
+    pointLabel: fmtMonthLong,
+  });
   const now = new Date();
   const partialLast = ty === now.getFullYear() && tm === now.getMonth() + 1;
-  if (partialLast) pointLabels[pointLabels.length - 1] += ' (bisher)';
-  return { label, values, labels, pointLabels, partialLast };
+  if (partialLast) series.pointLabels[series.pointLabels.length - 1] += ' (bisher)';
+  return { ...series, partialLast };
 }
 
 function linkStatsRanges(linkId, createdAt, custom) {
@@ -663,27 +677,35 @@ app.get('/login', (req, res) => {
   res.send(views.loginPage({ ssoEnabled: OIDC_ENABLED }));
 });
 
-app.post('/login', (req, res) => {
+app.post('/login', asyncRoute(async (req, res) => {
+  const denied = (status, error) => res.status(status).send(views.loginPage({ error, ssoEnabled: OIDC_ENABLED }));
+  if (!isSameOriginRequest(req)) return denied(403, 'Ungültige Anfrage.');
   const username = String(req.body.username || '').trim();
   const ipKey = `ip:${req.ip}`;
-  // Empty username gets no key, else all blank attempts would share one "user:" entry.
-  const userKey = username ? `user:${username.toLowerCase()}` : null;
-  if (rateLimited(ipKey) || (userKey && rateLimited(userKey))) {
-    return res.status(429).send(views.loginPage({ error: 'Zu viele Versuche. Bitte in 15 Minuten erneut probieren.', ssoEnabled: OIDC_ENABLED }));
+  // Empty username gets no name keys, else all blank attempts would share one entry; long names are cut.
+  const name = username.toLowerCase().slice(0, 64);
+  const pairKey = name ? `pair:${req.ip}|${name}` : null;
+  const userKey = name ? `user:${name}` : null;
+  if (rateLimited(ipKey, 30) || (pairKey && rateLimited(pairKey, 10)) || (userKey && rateLimited(userKey, 100))) {
+    return denied(429, 'Zu viele Versuche. Bitte in 15 Minuten erneut probieren.');
   }
   const user = stmts.userByName.get(username);
-  const passwordOk = verifyPassword(String(req.body.password || ''), user ? user.password_hash : DUMMY_PASSWORD_HASH);
+  const password = String(req.body.password || '');
+  const passwordOk = await verifyPasswordAsync(password, user ? user.password_hash : DUMMY_PASSWORD_HASH);
   if (!user || !passwordOk) {
     noteFailedLogin(ipKey);
+    if (pairKey) noteFailedLogin(pairKey);
     if (userKey) noteFailedLogin(userKey);
-    return res.status(401).send(views.loginPage({ error: 'Nutzername oder Passwort falsch.', ssoEnabled: OIDC_ENABLED }));
+    return denied(401, 'Nutzername oder Passwort falsch.');
   }
-  loginAttempts.delete(ipKey);
-  if (userKey) loginAttempts.delete(userKey);
+  // Only the name-specific counter is reset: an attacker with one valid account must not be able to
+  // reset the per-IP counter and keep guessing other names.
+  if (pairKey) loginLimiter.reset(pairKey);
+  if (needsRehash(user.password_hash)) stmts.updatePassword.run(await hashPasswordAsync(password), user.id); // weaker or older scrypt settings
   stmts.touchLastLogin.run(user.id);
   setSessionCookie(res, req, user);
   res.redirect('/app');
-});
+}));
 
 app.post('/logout', (req, res) => {
   // Bump token_version like a password change: else a stolen cookie stays valid for 30 days
@@ -695,10 +717,13 @@ app.post('/logout', (req, res) => {
   res.redirect('/login');
 });
 
+// Optional access rules for SSO logins (OIDC_ALLOWED_GROUPS, OIDC_ALLOWED_EMAIL_DOMAINS), see src/sso-access.js.
+const ssoAccess = createSsoAccess({ groups: process.env.OIDC_ALLOWED_GROUPS, domains: process.env.OIDC_ALLOWED_EMAIL_DOMAINS });
+
 // SSO login (OIDC Authorization Code + PKCE). redirect_uri comes from the first configured
 // domain (like originFor()) to match the URI registered with the identity provider.
 app.get('/login/sso', async (req, res) => {
-  if (!OIDC_ENABLED) return res.status(404).send('SSO ist nicht konfiguriert.');
+  if (!OIDC_ENABLED) return sendError(req, res, 404, 'SSO ist nicht konfiguriert.');
   try {
     const config = await getOidcConfig();
     const codeVerifier = oidc.randomPKCECodeVerifier();
@@ -708,7 +733,7 @@ app.get('/login/sso', async (req, res) => {
     const redirectUri = `${getDomains()[0] || `${req.protocol}://${req.get('host')}`}/login/sso/callback`;
     const authUrl = oidc.buildAuthorizationUrl(config, {
       redirect_uri: redirectUri,
-      scope: 'openid profile email',
+      scope: ssoAccess.needsGroupsClaim ? 'openid profile email groups' : 'openid profile email',
       code_challenge: codeChallenge,
       code_challenge_method: 'S256',
       state,
@@ -718,7 +743,7 @@ app.get('/login/sso', async (req, res) => {
     // redirectUri travels along so the callback reuses it exactly; re-deriving it (proxy, domain change)
     // could cause a "redirect_uri mismatch".
     res.setHeader('Set-Cookie',
-      `snar_oidc=${signOidcState({ codeVerifier, state, nonce, redirectUri })}; HttpOnly; SameSite=Lax; Path=/login/sso; Max-Age=600${req.secure ? '; Secure' : ''}`);
+      `snar_oidc=${signOidcState({ codeVerifier, state, nonce, redirectUri })}; HttpOnly; SameSite=Lax; Path=/login/sso; Max-Age=600${cookieSecure(req)}`);
     res.redirect(authUrl.href);
   } catch (e) {
     // Details in the server log only; the browser message stays generic.
@@ -728,7 +753,7 @@ app.get('/login/sso', async (req, res) => {
 });
 
 app.get('/login/sso/callback', async (req, res) => {
-  if (!OIDC_ENABLED) return res.status(404).send('SSO ist nicht konfiguriert.');
+  if (!OIDC_ENABLED) return sendError(req, res, 404, 'SSO ist nicht konfiguriert.');
   const saved = verifyOidcState(getCookie(req, 'snar_oidc'));
   if (!saved) {
     return res.status(401).send(views.loginPage({ error: 'SSO-Anmeldung abgelaufen oder ungültig. Bitte erneut versuchen.', ssoEnabled: OIDC_ENABLED }));
@@ -744,6 +769,12 @@ app.get('/login/sso/callback', async (req, res) => {
     });
     const claims = tokens.claims();
     if (!claims?.sub) throw new Error('SSO-Antwort ohne "sub"-Claim.');
+    if (stmts.ssoBlockedBySubject.get(claims.sub)) {
+      return res.status(403).send(views.loginPage({ error: 'Dieses SSO-Konto wurde gesperrt. Bitte wende dich an einen Admin.', ssoEnabled: OIDC_ENABLED }));
+    }
+    if (!ssoAccess.allowed(claims)) {
+      return res.status(403).send(views.loginPage({ error: 'Mit diesem SSO-Konto ist kein Zugang erlaubt.', ssoEnabled: OIDC_ENABLED }));
+    }
     let user = stmts.userBySsoSubject.get(claims.sub);
     if (!user) {
       user = provisionSsoUser({ subject: claims.sub, preferredUsername: claims.preferred_username || claims.email || claims.name });
@@ -760,7 +791,12 @@ app.get('/login/sso/callback', async (req, res) => {
 });
 
 app.get('/', (req, res) => res.redirect(sessionUser(getCookie(req, 'snar_session')) ? '/app' : '/login'));
-app.get('/healthz', (req, res) => res.type('text').send('ok'));
+// Answers only if the database does, so a stuck or broken database shows up as unhealthy.
+app.get('/healthz', (req, res) => {
+  let healthy = false;
+  try { healthy = dbPing(); } catch { /* unhealthy */ }
+  res.status(healthy ? 200 : 503).type('text').send(healthy ? 'ok' : 'Datenbank nicht erreichbar');
+});
 // Public, unauthenticated – self-recognition marker for "Domain testen", see INSTANCE_TOKEN.
 app.get('/healthz/instance', (req, res) => res.type('text').send(INSTANCE_TOKEN));
 
@@ -802,10 +838,27 @@ app.post('/app/links', requireAuth, (req, res) => {
 });
 
 // Load a link + check permission (owner or admin)
+// Login rate limit (src/login-limiter.js). Three keys (see POST /login): per IP (spraying many names), per IP
+// and name (guessing one name, without letting a stranger lock the real user out from elsewhere) and per
+// name with a high ceiling (a distributed attack on one account).
+const loginLimiter = createLoginLimiter();
+const rateLimited = (key, max) => loginLimiter.isLimited(key, max);
+const noteFailedLogin = (key) => loginLimiter.fail(key);
+
+// Cross-site form posts (login CSRF): browsers send Sec-Fetch-Site; older ones only Origin.
+function isSameOriginRequest(req) {
+  const site = req.get('sec-fetch-site');
+  if (site) return site === 'same-origin' || site === 'none';
+  const origin = req.get('origin');
+  if (!origin) return true; // no header: not a cross-site browser form post
+  try { return new URL(origin).host === (req.get('x-forwarded-host') || req.get('host')); } catch { return false; }
+}
+
 function loadOwnLink(req, res, next) {
   const link = stmts.linkById.get(Number(req.params.id));
-  if (!link) return res.status(404).send('Nicht gefunden.');
-  if (!canManage(req.user, link)) return res.status(403).send('Kein Zugriff auf diesen Link.');
+  if (!link) return sendError(req, res, 404, 'Diesen Link gibt es nicht.');
+  // 404, not 403: a foreign link must look like a missing one (else link IDs can be enumerated).
+  if (!canManage(req.user, link)) return sendError(req, res, 404, 'Diesen Link gibt es nicht.');
   req.link = link;
   next();
 }
@@ -914,19 +967,16 @@ app.post('/app/links/:id/update', requireAuth, loadOwnLink, (req, res) => {
   // even on org links. Hard 403 instead of silent discard: the UI locks the field, so a changed
   // value is a bug or a bypass attempt.
   if (!ownerOrAdmin && targetUrl !== req.link.target_url) {
-    return res.status(403).send('Nur Besitzer:in/Admin dürfen die Ziel-URL ändern.');
+    return sendError(req, res, 403, 'Nur Besitzer:in oder Admin dürfen die Ziel-URL ändern.');
   }
   // Non-owners of an org link keep the stored visibility, so nobody can lock themselves out by saving.
   const finalVisibility = ownerOrAdmin ? visibility : req.link.visibility;
-  if (targetUrl !== req.link.target_url) {
-    stmts.insertLinkAudit.run(req.link.id, req.user.id, req.link.target_url, targetUrl);
-  }
-  stmts.updateLink.run(targetUrl, title, finalVisibility, domain, expiresAt, req.link.id);
+  updateLinkWithAudit({ id: req.link.id, userId: req.user.id, oldUrl: req.link.target_url, newUrl: targetUrl, title, visibility: finalVisibility, domain, expiresAt });
   flashRedirect(res, `/app/links/${req.link.id}`, 'ok', 'Gespeichert. QR-Code bleibt gültig.');
 });
 
 app.post('/app/links/:id/delete', requireAuth, loadOwnLink, (req, res) => {
-  if (!isOwnerOrAdmin(req.user, req.link)) return res.status(403).send('Nur Besitzer:in/Admin dürfen diesen Link löschen.');
+  if (!isOwnerOrAdmin(req.user, req.link)) return sendError(req, res, 403, 'Nur Besitzer:in oder Admin dürfen diesen Link löschen.');
   stmts.deleteLink.run(req.link.id);
   flashRedirect(res, '/app', 'ok', 'Link gelöscht.');
 });
@@ -994,13 +1044,13 @@ app.post('/app/qr', requireAuth, async (req, res) => {
     try { svg = await qrSvgString(content, ec, { dark, light }); }
     catch { error = 'Inhalt lässt sich nicht als QR-Code kodieren – vermutlich zu lang für die gewählte Fehlerkorrektur.'; }
   }
-  res.send(views.staticQrPage({ content, ec, dark, light, transparentBg, svg, error, user: req.user, values }));
+  res.send(views.staticQrPage({ content, ec, dark, light, lightPick: HEX_COLOR_RE.test(String(req.body.light || '')) ? String(req.body.light) : null, transparentBg, svg, error, user: req.user, values }));
 });
 
 // Download via POST, so the (potentially sensitive) content never ends up in the URL.
 app.post('/app/qr/download', requireAuth, async (req, res) => {
   const data = String(req.body.data || '').slice(0, 2000);
-  if (!data) return res.status(400).send('Kein Inhalt.');
+  if (!data) return sendError(req, res, 400, 'Es gibt keinen Inhalt für den QR-Code.');
   const format = req.body.format === 'png' ? 'png' : 'svg';
   const color = qrColors(String(req.body.dark || ''), String(req.body.light || ''));
   await sendQr(res, data, { format, ec: String(req.body.ec || 'M'), size: 1024, download: true, filename: 'qr-statisch', color });
@@ -1010,17 +1060,17 @@ app.post('/app/qr/download', requireAuth, async (req, res) => {
 // User management (admins only)
 // ---------------------------------------------------------------------------
 app.get('/app/users', requireAuth, requireAdmin, (req, res) => {
-  res.send(views.usersPage({ users: stmts.listUsers.all(), user: req.user, flash: currentFlash(req) }));
+  res.send(views.usersPage({ users: stmts.listUsers.all(), ssoBlocked: stmts.listSsoBlocked.all(), user: req.user, flash: currentFlash(req) }));
 });
 
-app.post('/app/users', requireAuth, requireAdmin, (req, res) => {
+app.post('/app/users', requireAuth, requireAdmin, asyncRoute(async (req, res) => {
   const username = String(req.body.username || '').trim();
   const password = String(req.body.password || '');
   const role = req.body.role === 'admin' ? 'admin' : 'member';
   // Re-render on failure (see POST /app/links); password is never echoed back.
   const rerenderUsers = (error, errorField) => {
     res.send(views.usersPage({
-      users: stmts.listUsers.all(), user: req.user, flash: currentFlash(req),
+      users: stmts.listUsers.all(), ssoBlocked: stmts.listSsoBlocked.all(), user: req.user, flash: currentFlash(req),
       error, errorField, values: { username, role },
     }));
   };
@@ -1033,9 +1083,9 @@ app.post('/app/users', requireAuth, requireAdmin, (req, res) => {
   if (stmts.userByName.get(username)) {
     return rerenderUsers('Nutzername bereits vergeben.', 'username');
   }
-  stmts.insertUser.run(username, hashPassword(password), role);
+  stmts.insertUser.run(username, await hashPasswordAsync(password), role);
   flashRedirect(res, '/app/users', 'ok', `"${username}" angelegt. Startpasswort sicher übermitteln – Wechsel unter Konto.`);
-});
+}));
 
 app.post('/app/users/:id/delete', requireAuth, requireAdmin, (req, res) => {
   const target = stmts.userById.get(Number(req.params.id));
@@ -1051,7 +1101,13 @@ app.post('/app/users/:id/delete', requireAuth, requireAdmin, (req, res) => {
   const recipient = reassignTo || req.user; // fallback: the admin performing the action
   deleteUserAndReassign(target.id, recipient.id);
   const you = recipient.id === req.user.id ? 'dich' : `"${recipient.username}"`;
-  flashRedirect(res, '/app/users', 'ok', `"${target.username}" gelöscht, Links wurden an ${you} übertragen.`);
+  flashRedirect(res, '/app/users', 'ok', `"${target.username}" gelöscht, Links wurden an ${you} übertragen.${target.sso_subject ? ' Der SSO-Zugang ist gesperrt, bis du ihn unten freigibst.' : ''}`);
+});
+
+// Lets a deleted SSO account log in again (it is created anew with a fresh, empty account).
+app.post('/app/users/sso-blocked/:id/unblock', requireAuth, requireAdmin, (req, res) => {
+  stmts.deleteSsoBlocked.run(Number(req.params.id));
+  flashRedirect(res, '/app/users', 'ok', 'SSO-Zugang freigegeben. Bei der nächsten Anmeldung wird das Konto neu angelegt.');
 });
 
 // ---------------------------------------------------------------------------
@@ -1200,8 +1256,7 @@ app.post('/app/domains/:id/check-reachability', requireAuth, requireAdmin, async
 app.post('/app/domains/:id/delete', requireAuth, requireAdmin, loadDomain, (req, res) => {
   const domain = req.domain;
   const fallback = stmts.otherDomain.get(domain.id)?.origin || '';
-  stmts.reassignLinkDomain.run(fallback, domain.origin); // affected links keep working correctly right away
-  stmts.deleteDomain.run(domain.id);
+  deleteDomainAndReassign(domain.id, domain.origin, fallback); // affected links keep working correctly right away
   flashRedirect(res, '/app/domains', 'ok',
     `"${domain.origin}" entfernt${fallback ? `, betroffene Links laufen jetzt über "${fallback}"` : '.'}`);
 });
@@ -1210,14 +1265,19 @@ app.get('/app/account', requireAuth, (req, res) => {
   res.send(views.accountPage({ user: req.user, flash: currentFlash(req) }));
 });
 
-app.post('/app/account/password', requireAuth, (req, res) => {
+app.post('/app/account/password', requireAuth, asyncRoute(async (req, res) => {
   // The UI hides the form for SSO accounts – enforced server-side too.
   if (req.user.sso_subject) {
     return flashRedirect(res, '/app/account', 'err', 'Für SSO-Accounts nicht möglich, das Passwort wird extern verwaltet.');
   }
-  if (!verifyPassword(String(req.body.current || ''), req.user.password_hash)) {
+  // Limit for the check of the current password: a stolen session cookie must not allow unlimited guessing.
+  const pwKey = `pw:${req.user.id}`;
+  if (rateLimited(pwKey, 10)) return flashRedirect(res, '/app/account', 'err', 'Zu viele Versuche. Bitte in 15 Minuten erneut probieren.');
+  if (!(await verifyPasswordAsync(String(req.body.current || ''), req.user.password_hash))) {
+    noteFailedLogin(pwKey);
     return flashRedirect(res, '/app/account', 'err', 'Aktuelles Passwort ist falsch.');
   }
+  loginLimiter.reset(pwKey);
   const next = String(req.body.next || '');
   if (next.length < 8) {
     return flashRedirect(res, '/app/account', 'err', 'Neues Passwort zu kurz (mind. 8 Zeichen).');
@@ -1225,35 +1285,38 @@ app.post('/app/account/password', requireAuth, (req, res) => {
   if (next !== String(req.body.next_repeat || '')) {
     return flashRedirect(res, '/app/account', 'err', 'Passwörter stimmen nicht überein.');
   }
-  stmts.updatePassword.run(hashPassword(next), req.user.id);
+  stmts.updatePassword.run(await hashPasswordAsync(next), req.user.id);
   // Invalidate every issued cookie (other devices) and log this device back in fresh.
   stmts.bumpTokenVersion.run(req.user.id);
   setSessionCookie(res, req, stmts.userById.get(req.user.id));
   flashRedirect(res, '/app/account', 'ok', 'Passwort geändert. Andere Geräte wurden abgemeldet.');
-});
+}));
 
 // ---------------------------------------------------------------------------
 // Redirect – the actual core (public)
 // ---------------------------------------------------------------------------
+const shouldCountClick = createClickCounter();
+
 app.get('/:slug([A-Za-z0-9\-_]{1,64})', (req, res, next) => {
   if (RESERVED.has(req.params.slug.toLowerCase())) return next();
   const link = stmts.linkBySlug.get(req.params.slug);
-  if (!link) return res.status(404).send('Diesen Kurzlink gibt es nicht (mehr).');
-  if (isExpired(link)) return res.status(410).send('Dieser Kurzlink ist abgelaufen.');
+  if (!link) return sendError(req, res, 404, 'Diesen Kurzlink gibt es nicht (mehr).');
+  if (isExpired(link)) return sendError(req, res, 410, 'Dieser Kurzlink ist abgelaufen.');
 
   const { device, browser } = parseUA(req.get('user-agent'));
   const lang = (req.get('accept-language') || '').split(',')[0].slice(0, 8);
 
-  // Redirect first, click insert after: stats must never delay the redirect.
+  // Redirect first, click insert after: stats must never delay the redirect (and never depend on counting).
   res.set('Cache-Control', 'no-store'); // 302 + no-store => target stays changeable at any time
   res.redirect(302, link.target_url);
 
+  if (!shouldCountClick({ method: req.method, ip: req.ip, userAgent: req.get('user-agent'), linkId: link.id })) return;
   try {
     stmts.insertClick.run(link.id, refHost(req.get('referer')), device, browser, lang);
   } catch { /* stats must never block the redirect */ }
 });
 
-app.use((req, res) => res.status(404).send('Nicht gefunden.'));
+app.use((req, res) => sendError(req, res, 404, 'Diese Seite gibt es nicht.'));
 
 // Last resort: no stack traces to the client (also without NODE_ENV=production), and a rejected
 // async handler must not take the whole process down.
@@ -1261,7 +1324,7 @@ app.use((err, req, res, next) => {
   if (res.headersSent) return next(err);
   const status = err.status >= 400 && err.status < 500 ? err.status : 500;
   if (status === 500) console.error('Unbehandelter Fehler:', err);
-  res.status(status).type('text').send(status === 500 ? 'Interner Fehler.' : 'Ungültige Anfrage.');
+  sendError(req, res, status, status === 500 ? 'Das hat nicht geklappt. Bitte versuche es später noch einmal.' : 'Die Anfrage war ungültig.');
 });
 process.on('unhandledRejection', (err) => console.error('Unbehandelte Promise-Ablehnung:', err));
 
@@ -1276,7 +1339,31 @@ if (UPDATE_CHECK_ENABLED) {
   });
 }
 
-app.listen(PORT, () => {
+// Optional retention: CLICK_RETENTION_DAYS=N deletes clicks older than N days (daily, first run a minute after
+// the start). Unset or 0 keeps everything. The statistics ("Gesamt", totals) then cover only the kept period.
+const RETENTION_DAYS = Number(process.env.CLICK_RETENTION_DAYS);
+if (Number.isFinite(RETENTION_DAYS) && RETENTION_DAYS > 0) {
+  const purge = () => {
+    try {
+      const removed = deleteClicksOlderThanDays(RETENTION_DAYS);
+      if (removed) console.log(`Aufbewahrung: ${removed} Klicks älter als ${RETENTION_DAYS} Tage gelöscht.`);
+    } catch (e) { console.error('Aufbewahrung fehlgeschlagen:', e); }
+  };
+  setTimeout(purge, 60 * 1000).unref();
+  setInterval(purge, 24 * 60 * 60 * 1000).unref();
+}
+
+const server = app.listen(PORT, () => {
   const domains = getDomains();
   console.log(`snar läuft auf Port ${PORT}${domains.length ? ` – Kurz-Domain${domains.length > 1 ? 's' : ''}: ${domains.join(', ')}` : ''}`);
 });
+
+// docker stop sends SIGTERM: finish open requests, close the database cleanly, then exit.
+function shutdown(signal) {
+  console.log(`${signal} empfangen, fahre herunter.`);
+  setTimeout(() => { closeDb(); process.exit(1); }, 10000).unref();
+  server.close(() => { closeDb(); process.exit(0); });
+  server.closeIdleConnections?.();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

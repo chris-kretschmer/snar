@@ -38,7 +38,7 @@ There's no full automated test suite yet (see "Testing" below if you'd like to h
 
 ## Testing
 
-Right now, verification is manual (see above) plus the CI boot smoke test — there's no unit/integration test suite. If you want to contribute one, that would be a genuinely valuable PR; happy to discuss the approach in an issue first.
+`npm test` runs the suite in `test/` with Node's built-in test runner (database layer, migrations, click and login rules, shared helpers). CI runs it together with the syntax check, `npm audit`, a boot smoke test and a Docker build. Add a test with a change to the database layer, the rules modules or the migrations; UI changes are still verified by hand in the browser.
 
 ## Code style
 
@@ -47,6 +47,10 @@ Right now, verification is manual (see above) plus the CI boot smoke test — th
 - **UI text and user-facing strings are currently German-only.** Internationalization is something we'd like to tackle — see "Translations" below if you're interested in helping.
 - No framework, no build step, no client-side JS beyond `public/app.js` — that's intentional, please don't introduce one as part of an unrelated change.
 - Match the existing formatting (no linter/formatter is configured — just follow what's around your change).
+
+## Wording in the UI
+
+Pick one word per thing and keep it: **Konto** (not "Account"), **Nutzername** (not "Anmeldename"), **Kurzlink** (not "Short-Link"), **Gemeinsamer Tresor** and **Persönlicher Tresor** (short forms "Gemeinsam" and "Persönlich" only in the mobile bottom navigation). Visibility is "Persönlich" or "Organisation".
 
 ## Translations
 
