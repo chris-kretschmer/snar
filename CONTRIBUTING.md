@@ -2,8 +2,6 @@
 
 Thanks for considering a contribution. snar is maintained by one person in their spare time, so please bear with me if a review takes a while — but pull requests, bug reports, and questions are genuinely welcome.
 
-Some parts of this project were built with AI assistance (Claude Code), reviewed and tested throughout.
-
 ## Before you start on something bigger
 
 For a small fix (typo, obvious bug, docs) — just open a PR. For anything that touches architecture, adds a dependency, or changes existing behavior, please open an issue first to discuss the approach before investing time in an implementation. That avoids a finished PR getting rejected over a design disagreement.
@@ -25,6 +23,10 @@ ADMIN_PASSWORD=examplePassword123 BASE_URL=http://localhost:3000 node src/server
 ```
 
 See the [README](README.md) for the full list of environment variables.
+
+## Changing the database schema
+
+The `CREATE TABLE` block in `src/db.js` is the frozen baseline (schema version 1). Do not edit it for later changes: add a numbered step to `MIGRATIONS` in `src/migrations.js` instead (new column, new index, data fix). Existing installations then get the change on their next start, in a transaction, after an automatic backup file `snar-vor-migration-v<N>-<time>.db` next to the database. New installations run the same steps, so both end up identical. Never edit or remove a released step.
 
 ## Before opening a PR
 

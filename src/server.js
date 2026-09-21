@@ -8,8 +8,10 @@ const QRCode = require('qrcode');
 // ESM-only; require() works from Node 20.19/22.12 (see package.json "engines").
 const oidc = require('openid-client');
 
-const { stmts, deleteUserAndReassign, createLink, getSessionSecret, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty } = require('./db');
+const Theme = require('../public/theme-shared.js');
+const { stmts, deleteUserAndReassign, createLink, getSessionSecret, getThemeSetting, setThemeSetting, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty } = require('./db');
 const views = require('./views');
+const { startUpdateCheck } = require('./updates');
 const { isExpired } = views;
 
 const PORT = Number(process.env.PORT || 3000);
@@ -17,12 +19,22 @@ const PORT = Number(process.env.PORT || 3000);
 // Same rule as when creating an account via /app/users – applies to the bootstrap too.
 const USERNAME_RE = /^[A-Za-z0-9\-_.]{2,32}$/;
 
+const WEAK_ADMIN_PASSWORDS = new Set([
+  'bitte-ein-sicheres-passwort-eintragen', 'password', 'passwort', 'admin123', 'administrator', 'changeme',
+  '12345678', '123456789', 'qwertz123', 'qwerty123', 'letmein1', 'welcome1',
+]);
+
 // First start only: admin account from env; afterwards users are managed in-app.
 if (stmts.countUsers.get().n === 0) {
   const pw = process.env.ADMIN_PASSWORD;
   const name = (process.env.ADMIN_USER || 'admin').trim();
   if (!pw || pw.length < 8) {
     console.error('Erster Start: Bitte ADMIN_PASSWORD (mind. 8 Zeichen, optional ADMIN_USER) setzen, um das erste Admin-Konto anzulegen.');
+    process.exit(1);
+  }
+  // The placeholder from .env.example and other well-known values must never become the admin password.
+  if (WEAK_ADMIN_PASSWORDS.has(pw.toLowerCase())) {
+    console.error('Erster Start: ADMIN_PASSWORD ist ein bekanntes Beispiel- oder Standardpasswort. Bitte ein eigenes, sicheres Passwort setzen.');
     process.exit(1);
   }
   if (!USERNAME_RE.test(name)) {
@@ -34,8 +46,19 @@ if (stmts.countUsers.get().n === 0) {
 }
 
 // DOMAINS/BASE_URL seed the domain list on first start only; afterwards /app/domains.
+// A value without scheme ("kurz.example.com") gets https://; anything that is not a valid http(s) origin is skipped.
+function seedOrigin(value) {
+  try {
+    const u = new URL(/^[a-z][a-z0-9+.-]*:/i.test(value) ? value : `https://${value}`);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.origin : null;
+  } catch { return null; }
+}
 seedDomainsIfEmpty(
-  (process.env.DOMAINS || process.env.BASE_URL || '').split(',').map(s => s.trim().replace(/\/+$/, '')).filter(Boolean)
+  (process.env.DOMAINS || process.env.BASE_URL || '').split(',').map(s => s.trim()).filter(Boolean).map((raw) => {
+    const origin = seedOrigin(raw);
+    if (!origin) console.warn(`DOMAINS/BASE_URL: "${raw}" ist keine gültige http(s)-Adresse und wird übersprungen.`);
+    return origin;
+  }).filter(Boolean)
 );
 
 const SECRET = getSessionSecret();
@@ -90,9 +113,15 @@ const TRUSTED_PROXIES = process.env.TRUSTED_PROXIES
 app.set('trust proxy', ['loopback', 'linklocal', 'uniquelocal', ...TRUSTED_PROXIES]);
 // Security headers. style-src needs 'unsafe-inline' for style="..." attributes in views.js;
 // script-src stays 'self' (no inline JS anywhere). img-src data: for the dropdown-arrow SVG in style.css.
+// frame-ancestors/X-Frame-Options: nobody may embed the app (clickjacking); form-action/base-uri: forms
+// can only post to this origin and <base> cannot redirect relative URLs. Everything under /app is
+// no-store: the back button after logout, shared computers and proxies must not show pages or
+// QR codes (WLAN password, IBAN) from the cache. /static keeps its long cache.
 app.use((req, res, next) => {
-  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:");
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'");
+  res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  if (req.path === '/app' || req.path.startsWith('/app/')) res.setHeader('Cache-Control', 'no-store');
   next();
 });
 app.use(compression());
@@ -102,6 +131,14 @@ const STATIC_CACHE = { maxAge: '1y', immutable: true };
 // Dedicated route: serves CSS_CONTENT (font hash already substituted, see views.js), not the raw file.
 app.get('/static/style.css', (req, res) => {
   res.type('text/css').set('Cache-Control', 'public, max-age=31536000, immutable').send(views.CSS_CONTENT);
+});
+// Instance theme: accent colour and name (admin page "Darstellung").
+function refreshTheme() {
+  views.setTheme({ accent: getThemeSetting('accent'), name: getThemeSetting('name') });
+}
+refreshTheme();
+app.get('/static/theme.css', (req, res) => {
+  res.type('text/css').set('Cache-Control', 'public, max-age=31536000, immutable').send(views.getThemeCss());
 });
 app.use('/static', express.static(path.join(__dirname, '..', 'public'), STATIC_CACHE));
 
@@ -458,16 +495,23 @@ function isOwnerOrAdmin(user, link) {
 // 'YYYY-MM-DD HH:MM:SS' so datetime('now') in SQL stays comparable.
 function parseExpiry(input, tzOffsetRaw) {
   const raw = String(input || '').trim();
-  if (!raw) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(raw);
-  const tzOffset = Number(String(tzOffsetRaw ?? '').trim());
-  if (m && String(tzOffsetRaw ?? '').trim() !== '' && Number.isFinite(tzOffset)) {
-    const utcMs = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) + tzOffset * 60000;
-    return new Date(utcMs).toISOString().replace('T', ' ').slice(0, 19);
+  if (!raw) return null; // no expiry
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(raw);
+  if (!m) return undefined; // invalid: never silently clears the expiry
+  const [y, mo, d, h, mi] = m.slice(1).map(Number);
+  const wall = new Date(Date.UTC(y, mo - 1, d, h, mi));
+  if (y < 2000 || y > 2100 || wall.getUTCFullYear() !== y || wall.getUTCMonth() !== mo - 1 || wall.getUTCDate() !== d
+      || wall.getUTCHours() !== h || wall.getUTCMinutes() !== mi) return undefined;
+  const offsetStr = String(tzOffsetRaw ?? '').trim();
+  let utc;
+  if (offsetStr === '') {
+    utc = new Date(y, mo - 1, d, h, mi); // server local time approximates
+  } else {
+    const tzOffset = Number(offsetStr);
+    if (!Number.isInteger(tzOffset) || Math.abs(tzOffset) > 1440) return undefined;
+    utc = new Date(wall.getTime() + tzOffset * 60000);
   }
-  const d = new Date(raw);
-  if (isNaN(d)) return null;
-  return d.toISOString().replace('T', ' ').slice(0, 19);
+  return utc.toISOString().replace('T', ' ').slice(0, 19);
 }
 
 function toDatetimeLocal(dbString) {
@@ -480,12 +524,14 @@ const normalizeEc = (ec) => (['L', 'M', 'Q', 'H'].includes(ec) ? ec : 'M');
 
 // Errors (e.g. content exceeds QR capacity) become 400: Express 4 does not catch async rejections,
 // which would kill the process. Download header only after success, so errors are not saved as files.
+// Encoding a PNG is synchronous: a huge size would block the whole server.
+const MAX_QR_PIXELS = 2048;
 async function sendQr(res, text, { format, ec = 'M', size = 512, download = false, filename = 'qrcode', color }) {
   const level = normalizeEc(ec);
   try {
     let body, type;
     if (format === 'png') {
-      const width = Math.min(Math.max(Number(size) || 512, 64), 4096);
+      const width = Math.min(Math.max(Number(size) || 512, 64), MAX_QR_PIXELS);
       body = await QRCode.toBuffer(text, { errorCorrectionLevel: level, width, margin: 2, color });
       type = 'png';
     } else {
@@ -567,16 +613,33 @@ function buildQrTypeContent(req, type) {
   return String(req.body.data || '').trim();
 }
 
-function flashFromQuery(req) {
-  if (req.query.ok) return { type: 'ok', text: req.query.ok };
-  if (req.query.err) return { type: 'error', text: req.query.err };
-  return null;
+// Flash messages travel in a signed, short-lived cookie, not in the query string: a link like
+// /app/users?err=<any text> could otherwise show forged messages to a logged-in admin.
+// The middleware below moves a valid cookie to req.flash and clears it (one-shot).
+function currentFlash(req) {
+  return req.flash || null;
 }
-
-// Redirect with a flash message (counterpart to flashFromQuery)
 function flashRedirect(res, path, type, msg) {
-  res.redirect(`${path}?${type}=${encodeURIComponent(msg)}`);
+  const payload = Buffer.from(JSON.stringify({ t: type === 'ok' ? 'ok' : 'error', m: String(msg).slice(0, 300), e: Date.now() + 60000 })).toString('base64url');
+  res.append('Set-Cookie', `snar_flash=${payload}.${sign(payload)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=60`);
+  res.redirect(path);
 }
+app.use((req, res, next) => {
+  if (req.method !== 'GET' || req.path.startsWith('/static/')) return next();
+  const raw = getCookie(req, 'snar_flash');
+  if (raw) {
+    res.append('Set-Cookie', 'snar_flash=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');
+    try {
+      const payload = verifySigned(raw);
+      const data = payload && JSON.parse(Buffer.from(payload, 'base64url').toString());
+      if (data && data.e > Date.now() && typeof data.m === 'string') req.flash = { type: data.t === 'ok' ? 'ok' : 'error', text: data.m };
+    } catch { /* malformed cookie: no flash */ }
+  }
+  next();
+});
+
+// A target URL is stored, rendered on every list row and sent in the Location header.
+const MAX_URL_LENGTH = 2048;
 
 // Shared form fields for creating & editing
 function readLinkFields(req) {
@@ -704,7 +767,7 @@ app.get('/healthz/instance', (req, res) => res.type('text').send(INSTANCE_TOKEN)
 app.get('/app', requireAuth, (req, res) => {
   const links = stmts.linksByOwner.all(req.user.id);
   res.send(views.dashboard({
-    links, user: req.user, flash: flashFromQuery(req), domains: getDomains(),
+    links, user: req.user, flash: currentFlash(req), domains: getDomains(),
     shortUrl: (l) => shortUrl(l, req),
   }));
 });
@@ -715,16 +778,18 @@ app.post('/app/links', requireAuth, (req, res) => {
   // Re-render instead of redirect on failure: keeps entered values and can highlight the field.
   const rerenderDashboard = (error, errorField) => {
     res.send(views.dashboard({
-      links: stmts.linksByOwner.all(req.user.id), user: req.user, flash: flashFromQuery(req), domains: getDomains(),
+      links: stmts.linksByOwner.all(req.user.id), user: req.user, flash: currentFlash(req), domains: getDomains(),
       shortUrl: (l) => shortUrl(l, req),
       error, errorField,
       values: { target_url: String(req.body.target_url || ''), slug, title, domain, expires_at: String(req.body.expires_at || ''), visibility },
     }));
   };
   if (!isHttpUrl(targetUrl)) return rerenderDashboard('Bitte eine gültige http(s)-URL angeben.', 'target_url');
+  if (targetUrl.length > MAX_URL_LENGTH) return rerenderDashboard(`Die URL ist zu lang (höchstens ${MAX_URL_LENGTH} Zeichen).`, 'target_url');
   if (slug && (!/^[A-Za-z0-9\-_]{1,64}$/.test(slug) || RESERVED.has(slug.toLowerCase()))) {
     return rerenderDashboard('Slug ungültig oder reserviert.', 'slug');
   }
+  if (expiresAt === undefined) return rerenderDashboard('Ungültiges Ablaufdatum.', null);
   try {
     const link = createLink({ slug, targetUrl, title, visibility, ownerId: req.user.id, domain, expiresAt });
     res.redirect(`/app/links/${link.id}`);
@@ -820,7 +885,7 @@ function renderLinkDetail(req, res, link, overrides = {}) {
   res.send(views.linkDetail({
     link, origin: originFor(link, req), short: shortUrl(link, req), domains: getDomains(), stats,
     expiresAtLocal: toDatetimeLocal(link.expires_at), expired: isExpired(link),
-    user: req.user, flash: flashFromQuery(req), page: pageFromReferer(req),
+    user: req.user, flash: currentFlash(req), page: pageFromReferer(req),
     // Drives the visibility radios and the target-URL field (owner/admin only, see POST .../update).
     canEditRestricted: ownerOrAdmin,
     canDelete: ownerOrAdmin,
@@ -836,14 +901,15 @@ app.get('/app/links/:id', requireAuth, loadOwnLink, (req, res) => {
 app.post('/app/links/:id/update', requireAuth, loadOwnLink, (req, res) => {
   const { targetUrl, title, visibility, domain, expiresAt } = readLinkFields(req);
   const ownerOrAdmin = isOwnerOrAdmin(req.user, req.link);
-  if (!isHttpUrl(targetUrl)) {
+  if (!isHttpUrl(targetUrl) || targetUrl.length > MAX_URL_LENGTH) {
     return renderLinkDetail(req, res, req.link, {
-      error: 'Ungültige URL – nichts geändert.',
+      error: targetUrl.length > MAX_URL_LENGTH ? `URL zu lang (höchstens ${MAX_URL_LENGTH} Zeichen) – nichts geändert.` : 'Ungültige URL – nichts geändert.',
       errorField: 'target_url',
       // keep the submitted visibility (only owner/admin can change it; others see the stored value)
       values: { target_url: String(req.body.target_url || ''), title, domain, expiresAtLocal: String(req.body.expires_at || ''), visibility: ownerOrAdmin ? visibility : req.link.visibility },
     });
   }
+  if (expiresAt === undefined) return flashRedirect(res, `/app/links/${req.link.id}`, 'err', 'Ungültiges Ablaufdatum – nichts geändert.');
   // The target URL is the most security-critical field (phishing/malware redirect): owner/admin only,
   // even on org links. Hard 403 instead of silent discard: the UI locks the field, so a changed
   // value is a bug or a bypass attempt.
@@ -944,7 +1010,7 @@ app.post('/app/qr/download', requireAuth, async (req, res) => {
 // User management (admins only)
 // ---------------------------------------------------------------------------
 app.get('/app/users', requireAuth, requireAdmin, (req, res) => {
-  res.send(views.usersPage({ users: stmts.listUsers.all(), user: req.user, flash: flashFromQuery(req) }));
+  res.send(views.usersPage({ users: stmts.listUsers.all(), user: req.user, flash: currentFlash(req) }));
 });
 
 app.post('/app/users', requireAuth, requireAdmin, (req, res) => {
@@ -954,7 +1020,7 @@ app.post('/app/users', requireAuth, requireAdmin, (req, res) => {
   // Re-render on failure (see POST /app/links); password is never echoed back.
   const rerenderUsers = (error, errorField) => {
     res.send(views.usersPage({
-      users: stmts.listUsers.all(), user: req.user, flash: flashFromQuery(req),
+      users: stmts.listUsers.all(), user: req.user, flash: currentFlash(req),
       error, errorField, values: { username, role },
     }));
   };
@@ -989,10 +1055,55 @@ app.post('/app/users/:id/delete', requireAuth, requireAdmin, (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Design (admins only): accent colour and instance name
+// ---------------------------------------------------------------------------
+function renderDesign(req, res, { errors = {}, values = {} } = {}) {
+  const savedAccent = getThemeSetting('accent'), savedName = getThemeSetting('name');
+  res.send(views.designPage({
+    accent: values.accent || savedAccent || Theme.DEFAULT_ACCENT, isCustom: !!savedAccent,
+    name: values.name ?? savedName ?? '', nameCustom: !!savedName,
+    errors, user: req.user, flash: currentFlash(req),
+  }));
+}
+
+app.get('/app/design', requireAuth, requireAdmin, (req, res) => renderDesign(req, res));
+
+app.post('/app/design', requireAuth, requireAdmin, (req, res) => {
+  if (req.body.reset) {
+    setThemeSetting('accent', null);
+    refreshTheme();
+    return flashRedirect(res, '/app/design', 'ok', 'Akzentfarbe auf Standard zurückgesetzt.');
+  }
+  const color = Theme.normalizeHex(req.body.accent);
+  if (!color) return renderDesign(req, res, { errors: { accent: 'Ungültige Farbe. Bitte eine Farbe im Format #rrggbb wählen.' } });
+  if (Theme.contrastOnWhite(color) < Theme.MIN_CONTRAST) {
+    return renderDesign(req, res, { values: { accent: color }, errors: { accent: 'Kontrast auf Weiß zu gering (mindestens 4,5:1), die Farbe ist als Linktext schlecht lesbar.' } });
+  }
+  setThemeSetting('accent', color === Theme.DEFAULT_ACCENT ? null : color);
+  refreshTheme();
+  flashRedirect(res, '/app/design', 'ok', 'Akzentfarbe gespeichert.');
+});
+
+app.post('/app/design/name', requireAuth, requireAdmin, (req, res) => {
+  if (req.body.reset) {
+    setThemeSetting('name', null);
+    refreshTheme();
+    return flashRedirect(res, '/app/design', 'ok', 'Name auf Standard zurückgesetzt.');
+  }
+  const name = Theme.normalizeName(req.body.name);
+  if (name.length > Theme.MAX_NAME_LENGTH) {
+    return renderDesign(req, res, { values: { name }, errors: { name: `Höchstens ${Theme.MAX_NAME_LENGTH} Zeichen.` } });
+  }
+  setThemeSetting('name', name && name !== Theme.DEFAULT_NAME ? name : null);
+  refreshTheme();
+  flashRedirect(res, '/app/design', 'ok', 'Name gespeichert.');
+});
+
+// ---------------------------------------------------------------------------
 // Domains (admins only) – the first domain in the list is the default domain
 // ---------------------------------------------------------------------------
 app.get('/app/domains', requireAuth, requireAdmin, (req, res) => {
-  res.send(views.domainsPage({ domains: stmts.listDomains.all(), user: req.user, flash: flashFromQuery(req) }));
+  res.send(views.domainsPage({ domains: stmts.listDomains.all(), user: req.user, flash: currentFlash(req) }));
 });
 
 app.post('/app/domains', requireAuth, requireAdmin, (req, res) => {
@@ -1003,7 +1114,7 @@ app.post('/app/domains', requireAuth, requireAdmin, (req, res) => {
   // Direct re-render on failure (see the comment at POST /app/links).
   const rerenderDomains = (error) => {
     res.send(views.domainsPage({
-      domains: stmts.listDomains.all(), user: req.user, flash: flashFromQuery(req),
+      domains: stmts.listDomains.all(), user: req.user, flash: currentFlash(req),
       error, errorField: 'origin', values: { origin: rawOrigin },
     }));
   };
@@ -1036,18 +1147,22 @@ function isPrivateOrLinkLocalIp(ip) {
       || (a === 172 && b >= 16 && b <= 31)
       || (a === 192 && b === 168)
       || (a === 169 && b === 254)
-      || (a === 100 && b >= 64 && b <= 127);
+      || (a === 100 && b >= 64 && b <= 127)
+      || (a === 198 && (b === 18 || b === 19));
   }
   if (type === 6) {
     const lower = ip.toLowerCase();
     if (lower.startsWith('::ffff:')) return isPrivateOrLinkLocalIp(lower.slice(7));
-    return /^f[cd]/.test(lower) || /^fe[89ab]/.test(lower);
+    return lower === '::' || /^f[cd]/.test(lower) || /^fe[89abcdef]/.test(lower);
   }
   return true; // unparsable – reject rather than risk it
 }
 async function resolvesToPrivateIp(hostname) {
+  // URL#hostname keeps the brackets of an IPv6 literal, and dns.lookup() cannot resolve "[fd00::1]".
+  const host = hostname.replace(/^\[|\]$/g, '');
+  if (net.isIP(host)) return isPrivateOrLinkLocalIp(host);
   try {
-    const addrs = await dns.promises.lookup(hostname, { all: true });
+    const addrs = await dns.promises.lookup(host, { all: true });
     return addrs.some(a => isPrivateOrLinkLocalIp(a.address));
   } catch {
     return false; // let the fetch() below produce the normal DNS-failure message
@@ -1056,7 +1171,8 @@ async function resolvesToPrivateIp(hostname) {
 app.post('/app/domains/:id/check-reachability', requireAuth, requireAdmin, async (req, res) => {
   const domain = stmts.domainById.get(Number(req.params.id));
   if (!domain) return res.status(404).json({ ok: false, reason: 'Domain nicht gefunden.' });
-  const hostname = new URL(domain.origin).hostname;
+  let hostname;
+  try { hostname = new URL(domain.origin).hostname; } catch { return res.json({ ok: false, reason: 'Die gespeicherte Domain ist keine gültige Adresse.' }); }
   if (await resolvesToPrivateIp(hostname)) {
     return res.json({ ok: false, reason: 'Zeigt auf eine private/interne Adresse – wird aus Sicherheitsgründen nicht geprüft.' });
   }
@@ -1091,13 +1207,13 @@ app.post('/app/domains/:id/delete', requireAuth, requireAdmin, loadDomain, (req,
 });
 
 app.get('/app/account', requireAuth, (req, res) => {
-  res.send(views.accountPage({ user: req.user, flash: flashFromQuery(req) }));
+  res.send(views.accountPage({ user: req.user, flash: currentFlash(req) }));
 });
 
 app.post('/app/account/password', requireAuth, (req, res) => {
   // The UI hides the form for SSO accounts – enforced server-side too.
   if (req.user.sso_subject) {
-    return flashRedirect(res, '/app/account', 'err', 'Für SSO-Accounts nicht möglich — das Passwort wird extern verwaltet.');
+    return flashRedirect(res, '/app/account', 'err', 'Für SSO-Accounts nicht möglich, das Passwort wird extern verwaltet.');
   }
   if (!verifyPassword(String(req.body.current || ''), req.user.password_hash)) {
     return flashRedirect(res, '/app/account', 'err', 'Aktuelles Passwort ist falsch.');
@@ -1138,6 +1254,27 @@ app.get('/:slug([A-Za-z0-9\-_]{1,64})', (req, res, next) => {
 });
 
 app.use((req, res) => res.status(404).send('Nicht gefunden.'));
+
+// Last resort: no stack traces to the client (also without NODE_ENV=production), and a rejected
+// async handler must not take the whole process down.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const status = err.status >= 400 && err.status < 500 ? err.status : 500;
+  if (status === 500) console.error('Unbehandelter Fehler:', err);
+  res.status(status).type('text').send(status === 500 ? 'Interner Fehler.' : 'Ungültige Anfrage.');
+});
+process.on('unhandledRejection', (err) => console.error('Unbehandelte Promise-Ablehnung:', err));
+
+// Optional update hint for admins (sidebar): asks the GitHub Releases API every few hours.
+// UPDATE_CHECK=off disables it; UPDATE_REPO / UPDATE_API_URL are for forks and tests.
+const UPDATE_CHECK_ENABLED = !/^(off|false|0|no)$/i.test(process.env.UPDATE_CHECK || '');
+if (UPDATE_CHECK_ENABLED) {
+  startUpdateCheck({
+    current: require('../package.json').version,
+    repo: process.env.UPDATE_REPO, apiUrl: process.env.UPDATE_API_URL,
+    onUpdate: views.setUpdateInfo,
+  });
+}
 
 app.listen(PORT, () => {
   const domains = getDomains();

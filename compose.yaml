@@ -32,6 +32,9 @@ services:
       # "Reverse Proxy". The default already covers a proxy on the same
       # host or as another container in this compose network.
       # TRUSTED_PROXIES: "${TRUSTED_PROXIES:-}"
+      # Update hint for admins in the sidebar: asks the GitHub Releases API every
+      # few hours whether a newer version exists. "off" disables the request.
+      UPDATE_CHECK: "${UPDATE_CHECK:-on}"
       # Optional: SSO login via OIDC (e.g. Authentik) in addition to
       # password login. Only active once all three variables are set.
       # Register the redirect URI with the provider: <domain>/login/sso/callback

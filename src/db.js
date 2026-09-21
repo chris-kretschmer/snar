@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
+const { migrate } = require('./migrations');
 
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -90,6 +91,10 @@ CREATE TABLE IF NOT EXISTS domains (
 );
 `);
 
+// Baseline above = schema version 1; later schema changes are numbered steps in migrations.js.
+// Must run before any statement is prepared, since those may use columns added by a step.
+migrate(db, { dataDir: DATA_DIR });
+
 // ---------------------------------------------------------------------------
 // Session secret (persisted so logins survive restarts)
 // ---------------------------------------------------------------------------
@@ -99,6 +104,21 @@ function getSessionSecret() {
   const secret = crypto.randomBytes(32).toString('hex');
   db.prepare(`INSERT INTO meta (key, value) VALUES ('session_secret', ?)`).run(secret);
   return secret;
+}
+
+// ---------------------------------------------------------------------------
+// Theme (admin page "Darstellung"): accent colour and instance name. Stored in
+// meta as theme_<key>; no row means the default.
+// ---------------------------------------------------------------------------
+const THEME_KEYS = new Set(['accent', 'name']);
+function getThemeSetting(key) {
+  if (!THEME_KEYS.has(key)) throw new Error('unknown theme key: ' + key);
+  return db.prepare('SELECT value FROM meta WHERE key = ?').get('theme_' + key)?.value || null;
+}
+function setThemeSetting(key, value) {
+  if (!THEME_KEYS.has(key)) throw new Error('unknown theme key: ' + key);
+  if (value) db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run('theme_' + key, value);
+  else db.prepare('DELETE FROM meta WHERE key = ?').run('theme_' + key);
 }
 
 // ---------------------------------------------------------------------------
@@ -112,7 +132,12 @@ function hashPassword(pw) {
 
 function verifyPassword(pw, stored) {
   const [saltHex, hashHex] = String(stored || '').split(':');
-  if (!saltHex || !hashHex) return false;
+  if (!saltHex || !hashHex) {
+    // SSO accounts have no hash: do the same scrypt work anyway, so the response time does not tell
+    // them apart from local accounts.
+    crypto.scryptSync(pw, Buffer.alloc(16), 32);
+    return false;
+  }
   const hash = crypto.scryptSync(pw, Buffer.from(saltHex, 'hex'), 32);
   const expected = Buffer.from(hashHex, 'hex');
   return hash.length === expected.length && crypto.timingSafeEqual(hash, expected);
@@ -323,4 +348,4 @@ const deleteUserAndReassign = db.transaction((userId, recipientId) => {
   stmts.deleteUser.run(userId);
 });
 
-module.exports = { stmts, deleteUserAndReassign, createLink, getSessionSecret, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty };
+module.exports = { stmts, deleteUserAndReassign, createLink, getSessionSecret, getThemeSetting, setThemeSetting, hashPassword, verifyPassword, bootstrapAdmin, provisionSsoUser, seedDomainsIfEmpty };

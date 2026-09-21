@@ -507,7 +507,7 @@ if (deleteUserDialog) {
       e.preventDefault();
       pendingForm = form;
       const targetId = Number(form.dataset.deleteUser);
-      textEl.textContent = `„${form.dataset.username}" wird endgültig gelöscht. Wähle, wer die persönlichen Links übernimmt — kein gedruckter QR-Code läuft dadurch ins Leere. Diese Aktion lässt sich nicht rückgängig machen.`;
+      textEl.textContent = `„${form.dataset.username}“ wird endgültig gelöscht. Wähle, wer die persönlichen Links übernimmt. Kein gedruckter QR-Code läuft dadurch ins Leere. Diese Aktion lässt sich nicht rückgängig machen.`;
       select.replaceChildren(...allUsers
         .filter((u) => u.id !== targetId)
         .map((u) => {
@@ -543,8 +543,8 @@ if (deleteUserDialog) {
   });
 }
 
-// Enable delete only once the slug is typed exactly. Not disabled in the HTML
-// so it still works without JS (then only confirm() applies).
+// Enable delete only once the slug is typed exactly. The button is also disabled in
+// the HTML, so without JS (or before this script ran) nothing can be deleted by accident.
 document.querySelectorAll('[data-confirm-slug]').forEach((input) => {
   const btn = input.closest('form')?.querySelector('button[type=submit]');
   if (!btn) return;
@@ -819,6 +819,39 @@ if (rangeGroup) {
   });
 }
 
+// Admin page "Darstellung": live preview of the accent colour on the whole page.
+// Nothing is saved until the form is submitted; the save button stays disabled
+// while the contrast on white is below the minimum (server checks it again).
+const designForm = document.getElementById('design-form');
+if (designForm && window.SnarTheme) {
+  const Theme = window.SnarTheme;
+  const colorInput = document.getElementById('accent');
+  const contrastInfo = document.getElementById('accent-contrast');
+  const saveBtn = designForm.querySelector('button[type=submit]:not([name=reset])');
+  const minContrast = Number(designForm.dataset.minContrast);
+  const fmtRatio = (r) => r.toFixed(1).replace('.', ',');
+  const updatePreview = () => {
+    const color = Theme.normalizeHex(colorInput.value);
+    if (!color) return;
+    document.documentElement.style.setProperty('--accent', color);
+    const ratio = Theme.contrastOnWhite(color);
+    const ok = ratio >= minContrast;
+    contrastInfo.textContent = `Kontrast auf Weiß: ${fmtRatio(ratio)}:1` + (ok ? '' : ` (zu gering, mindestens ${fmtRatio(minContrast)}:1)`);
+    saveBtn.disabled = !ok;
+  };
+  colorInput.addEventListener('input', updatePreview);
+  updatePreview();
+}
+
+// Admin page "Darstellung": live name preview in the sidebar and on the page.
+const brandNameInput = document.getElementById('brand-name');
+if (brandNameInput && window.SnarTheme) {
+  const Theme = window.SnarTheme;
+  brandNameInput.addEventListener('input', () => {
+    const text = Theme.normalizeName(brandNameInput.value) || Theme.DEFAULT_NAME;
+    document.querySelectorAll('[data-brand-name]').forEach((el) => { el.textContent = text; });
+  });
+}
 // Focus a validation error on load: the specific invalid field if any, else
 // the generic .flash.error banner (login, QR generator, flashRedirect toast).
 const invalidField = document.querySelector('input.invalid, textarea.invalid');
@@ -858,3 +891,21 @@ function guardUnsavedChanges(form) {
 }
 guardUnsavedChanges(document.getElementById('edit-form'));
 guardUnsavedChanges(document.getElementById('password-form'));
+
+// Update box (admins, views.js): can be dismissed per version; a newer release brings it back.
+const updateBox = document.getElementById('update-box');
+if (updateBox) {
+  const storageKey = 'snar-update-dismissed';
+  let dismissed = null;
+  try { dismissed = localStorage.getItem(storageKey); } catch { /* storage blocked: box just stays */ }
+  if (dismissed === updateBox.dataset.version) updateBox.hidden = true;
+  updateBox.querySelector('.update-close').addEventListener('click', () => {
+    updateBox.hidden = true;
+    try { localStorage.setItem(storageKey, updateBox.dataset.version); } catch { /* ignore */ }
+  });
+}
+
+// Destructive buttons ship disabled (views.js) and are enabled only now, after the
+// confirmation handlers above are attached: without JS, or on a slow connection,
+// nothing can be deleted before the confirmation dialog exists.
+document.querySelectorAll('[data-needs-js]').forEach((btn) => { btn.disabled = false; });

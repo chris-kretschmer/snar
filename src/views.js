@@ -4,6 +4,8 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const Theme = require('../public/theme-shared.js');
+const APP_VERSION = require('../package.json').version;
 
 // Cache busting for /static/*: assets are cached aggressively (maxAge in
 // server.js), so a content hash is appended as query parameter to make deploys
@@ -18,6 +20,7 @@ function assetVersion(relPath) {
 }
 const CSS_URL = `/static/style.css?v=${assetVersion('style.css')}`;
 const CHART_JS_URL = `/static/chart-shared.js?v=${assetVersion('chart-shared.js')}`;
+const THEME_JS_URL = `/static/theme-shared.js?v=${assetVersion('theme-shared.js')}`;
 const APP_JS_URL = `/static/app.js?v=${assetVersion('app.js')}`;
 const FONT_URL = `/static/fonts/open-sans-latin.woff2?v=${assetVersion('fonts/open-sans-latin.woff2')}`;
 
@@ -36,6 +39,35 @@ function loadCssContent() {
   }
 }
 const CSS_CONTENT = loadCssContent();
+
+// Theme (admin page "Darstellung"): accent colour and instance name.
+// /static/theme.css only sets --accent on :root and is linked after style.css.
+// The URL carries a content hash like the other assets, so a change takes effect
+// at once despite the long cache.
+let themeCss = '';
+let themeUrl = null;
+let themeName = Theme.DEFAULT_NAME;
+function setTheme({ accent = null, name = null } = {}) {
+  const color = Theme.normalizeHex(accent);
+  themeCss = color ? `:root { --accent: ${color}; }\n` : '';
+  themeUrl = color ? `/static/theme.css?v=${crypto.createHash('sha256').update(themeCss).digest('hex').slice(0, 10)}` : null;
+  themeName = name || Theme.DEFAULT_NAME;
+}
+const getThemeCss = () => themeCss;
+
+// Newer release found by src/updates.js ({ version, url } or null); shown to admins only.
+let updateInfo = null;
+function setUpdateInfo(info) { updateInfo = info; }
+function updateBox(user) {
+  if (!updateInfo || user.role !== 'admin') return '';
+  return `
+  <aside class="update-box" id="update-box" data-version="${esc(updateInfo.version)}" aria-label="Update verfügbar">
+    <button type="button" class="update-close" aria-label="Hinweis ausblenden">×</button>
+    <b>Update verfügbar</b>
+    <span>Version ${esc(updateInfo.version)} (installiert: ${esc(APP_VERSION)})</span>
+    <a href="${esc(updateInfo.url)}" target="_blank" rel="noopener">Änderungen ansehen</a>
+  </aside>`;
+}
 
 function esc(s) {
   return String(s ?? '')
@@ -70,7 +102,7 @@ function fmtDate(iso) {
 // Language tag ("de-DE") -> short code plus full name for tooltip/screen readers.
 const langNames = new Intl.DisplayNames(['de'], { type: 'language' });
 function langInfo(tag) {
-  if (!tag) return { code: '–', name: 'unbekannt' };
+  if (!tag) return { code: '–', name: 'Unbekannt' };
   let name = tag;
   try { name = langNames.of(tag); } catch { /* malformed tag: show it as is */ }
   return { code: tag.split('-')[0].toUpperCase(), name };
@@ -141,7 +173,7 @@ const NAV_GROUPS = [
   {
     adminOnly: true,
     items: [
-      { key: 'users', href: '/app/users', label: 'Admin-Einstellungen', icon: 'settings', activeKeys: ['users', 'domains'] },
+      { key: 'users', href: '/app/users', label: 'Admin-Einstellungen', icon: 'settings', activeKeys: ['users', 'domains', 'design'] },
     ],
   },
 ];
@@ -174,7 +206,7 @@ function bottomNav(page, user) {
   // Sidebar-Overlay) bleibt über /app/account erhalten, siehe accountPage().
   // Mitglieder: "Mehr" öffnet das Sidebar-Overlay.
   const isAdmin = user.role === 'admin';
-  const moreActive = page === 'users' || page === 'domains';
+  const moreActive = page === 'users' || page === 'domains' || page === 'design';
   const moreItem = isAdmin
     ? `<a class="bottom-nav-item${moreActive ? ' active' : ''}" href="/app/users"${moreActive ? ' aria-current="page"' : ''}>${icon('settings', 'navicon')}<span>Admin</span></a>`
     : `<button type="button" class="bottom-nav-item" id="bottom-nav-more" aria-haspopup="true" aria-controls="sidebar" aria-expanded="false">${icon('menu', 'navicon')}<span>Mehr</span></button>`;
@@ -188,7 +220,13 @@ function bottomNav(page, user) {
   </nav>`;
 }
 
-function layout({ title, body, user = null, flash = null, page = null }) {
+// Instance name (sidebar, mobile top bar, login page); data-brand-name lets the
+// "Darstellung" page update it live while typing.
+function brandInner() {
+  return `<span translate="no" data-brand-name>${esc(themeName)}</span>`;
+}
+
+function layout({ title, body, user = null, flash = null, page = null, scripts = '' }) {
   return `<!doctype html>
 <html lang="de">
 <head>
@@ -196,14 +234,15 @@ function layout({ title, body, user = null, flash = null, page = null }) {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#f7f8fa">
-<title>${esc(title)} · snar</title>
+<title>${esc(title)} · ${esc(themeName)}</title>
 <link rel="preload" href="${FONT_URL}" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="${CSS_URL}">
+${themeUrl ? `<link rel="stylesheet" href="${themeUrl}">` : ''}
 </head>
 <body>
 ${user ? `<a class="skip-link" href="#main-content">Zum Inhalt springen</a>
 <div class="mobile-topbar">
-  <a class="brand" href="/app"><span translate="no">snar</span></a>
+  <a class="brand" href="/app">${brandInner()}</a>
   <a class="mobile-topbar-account" href="/app/account" aria-label="Konto: ${esc(user.username)}">
     <span class="avatar">${esc(user.username.slice(0, 1).toUpperCase())}</span>
   </a>
@@ -212,7 +251,7 @@ ${user ? `<a class="skip-link" href="#main-content">Zum Inhalt springen</a>
 ${user ? `<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 <aside class="sidebar" id="sidebar">
   <div class="sidebar-header">
-    <a class="brand" href="/app"><span translate="no">snar</span></a>
+    <a class="brand" href="/app">${brandInner()}</a>
   </div>
   <div class="sidebar-account">
     <button type="button" id="account-menu-toggle" class="account-trigger" aria-haspopup="menu" aria-expanded="false" aria-controls="account-menu">
@@ -228,7 +267,7 @@ ${user ? `<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
   </div>
   <nav class="sidenav">
     ${NAV_GROUPS.map(g => navGroup(g, user, page)).join('')}
-  </nav>
+  </nav>${updateBox(user)}
 </aside>` : ''}
 <div class="shell-main" id="main-content" tabindex="-1">
 ${flash ? `<div class="flash toast ${esc(flash.type)}" role="status">${esc(flash.text)}</div>` : ''}
@@ -246,7 +285,7 @@ ${user ? `<dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="co
   </div>
 </dialog>` : ''}
 <script src="${CHART_JS_URL}"></script>
-<script src="${APP_JS_URL}"></script>
+${scripts}<script src="${APP_JS_URL}"></script>
 </body>
 </html>`;
 }
@@ -255,7 +294,7 @@ function loginPage({ error = null, ssoEnabled = false } = {}) {
   const body = `
 <main class="login-shell">
 <div class="login-card">
-  <h1 class="login-brand"><span translate="no">snar</span></h1>
+  <h1 class="login-brand">${brandInner()}</h1>
   <h2>Willkommen zurück!</h2>
   <h3>Melde dich an, um fortzufahren.</h3>
   ${error ? `<div class="flash error">${esc(error)}</div>` : ''}
@@ -375,7 +414,7 @@ function dashboard({ links, shortUrl, domains, user, flash, error = null, errorF
     <div class="grid-form">
       <div class="field grow">
         <label for="target">Ziel-URL</label>
-        <input id="target" name="target_url" type="text" placeholder="https://…" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required autocomplete="off">
+        <input id="target" name="target_url" type="text" maxlength="2048" placeholder="https://…" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required autocomplete="off">
         ${fieldErrorSpan('target_url', errorField, error, 'target')}
       </div>
     </div>
@@ -433,7 +472,7 @@ ${searchTable({
     links,
     theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Erstellt von</th><th>Short-Link</th><th>Klicks</th><th></th>`,
     rowsHtml: links.map(l => linkTableRow(l, shortUrl(l), { extraColumn: 'owner' })).join(''),
-    emptyText: 'Der Tresor ist leer. Stelle einen Link auf „Organisation", damit er hier für alle erscheint.',
+    emptyText: 'Der Tresor ist leer. Stelle einen Link auf „Organisation“, damit er hier für alle erscheint.',
   })}
 </div>
 </main>`;
@@ -451,7 +490,7 @@ ${searchTable({
     links,
     theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Short-Link</th><th>Klicks</th><th></th>`,
     rowsHtml: links.map(l => linkTableRow(l, shortUrl(l))).join(''),
-    emptyText: 'Noch keine persönlichen Links. Lege unter „Erstellen" einen mit Sichtbarkeit „Persönlich" an.',
+    emptyText: 'Noch keine persönlichen Links. Lege unter „Erstellen“ einen mit Sichtbarkeit „Persönlich“ an.',
   })}
 </div>
 </main>`;
@@ -720,7 +759,7 @@ ${canDelete ? `
   </div>
   <form method="post" action="/app/links/${link.id}/delete" data-confirm="Diesen Link wirklich löschen?">
     <input type="text" data-confirm-slug="${esc(link.slug)}" placeholder="Kürzel eintippen…" aria-label="Kürzel zur Bestätigung eingeben" autocomplete="off">
-    <button class="destructive-ghost" type="submit">Löschen…</button>
+    <button class="destructive-ghost" type="submit" disabled>Löschen…</button>
   </form>
 </section>` : ''}
 </div>
@@ -823,7 +862,7 @@ function staticQrPage({ content = '', ec = 'M', dark = '#000000', light = '#ffff
     <h1>Statischer QR-Code Generator</h1>
     <button type="submit" form="qr-form" class="head-action">Erzeugen</button>
   </div>
-  <p class="muted flush">Inhalt landet direkt im QR-Code — anders als bei „Erstellen" nicht mehr änderbar, ohne Statistik, ohne Speicherung.</p>
+  <p class="muted flush">Inhalt landet direkt im QR-Code. Anders als bei „Erstellen“ nicht mehr änderbar, ohne Statistik, ohne Speicherung.</p>
 </div>
 
 <div class="detail-grid">
@@ -833,7 +872,7 @@ function staticQrPage({ content = '', ec = 'M', dark = '#000000', light = '#ffff
   <div class="dl">
     <form method="post" action="/app/qr/download">${dlFields}<input type="hidden" name="format" value="svg"><button class="btn ghost" type="submit">SVG</button></form>
     <form method="post" action="/app/qr/download">${dlFields}<input type="hidden" name="format" value="png"><button class="btn ghost" type="submit">PNG</button></form>
-  </div>` : `<p class="muted flush">Vorschau erscheint hier, sobald du „Erzeugen" klickst.</p>`}
+  </div>` : `<p class="muted flush">Vorschau erscheint hier, sobald du „Erzeugen“ klickst.</p>`}
 </section>
 
 <section class="card">
@@ -865,7 +904,7 @@ function userTableRow(u, currentUser) {
     ${u.id === currentUser.id
       ? `<button class="ghost" type="button" disabled title="Selbstlöschung blockiert">Löschen</button>`
       : `<form method="post" action="/app/users/${u.id}/delete" class="inline" data-delete-user="${u.id}" data-username="${esc(u.username)}">
-           <button class="destructive-ghost" type="submit">Löschen</button></form>`}
+           <button class="destructive-ghost" type="submit" disabled data-needs-js>Löschen</button></form>`}
   </td>
 </tr>`;
 }
@@ -876,6 +915,7 @@ function adminTabs(page) {
   const tabs = [
     ['users', '/app/users', 'Zugangsverwaltung'],
     ['domains', '/app/domains', 'Domainverwaltung'],
+    ['design', '/app/design', 'Darstellung'],
   ];
   return `<div class="tab-group" role="tablist" aria-label="Admin-Einstellungen">
     ${tabs.map(([key, href, label]) =>
@@ -963,8 +1003,8 @@ function domainTableRow(d, isDefault, showDefaultControl) {
       ${!isDefault && showDefaultControl ? `<form method="post" action="/app/domains/${d.id}/set-default">
         <button class="btn ghost" type="submit">Als Standard setzen</button>
       </form>` : ''}
-      <form method="post" action="/app/domains/${d.id}/delete" data-confirm-modal="${esc(`„${stripProto(d.origin)}" wird entfernt. Alle Links, die aktuell darüber laufen, werden automatisch auf eine andere konfigurierte Domain umgestellt — kein gedruckter QR-Code bricht dadurch, der Redirect selbst prüft die Domain ohnehin nicht. Diese Aktion lässt sich nicht rückgängig machen.`)}">
-        <button class="destructive-ghost" type="submit">Entfernen</button>
+      <form method="post" action="/app/domains/${d.id}/delete" data-confirm-modal="${esc(`„${stripProto(d.origin)}“ wird entfernt. Alle Links, die aktuell darüber laufen, werden automatisch auf eine andere konfigurierte Domain umgestellt. Kein gedruckter QR-Code bricht dadurch, der Redirect selbst prüft die Domain ohnehin nicht. Diese Aktion lässt sich nicht rückgängig machen.`)}">
+        <button class="destructive-ghost" type="submit" disabled data-needs-js>Entfernen</button>
       </form>
     </div>
   </td>
@@ -972,6 +1012,58 @@ function domainTableRow(d, isDefault, showDefaultControl) {
 }
 
 // error/errorField/values: see dashboard().
+// Design page: name and accent colour, each in its own card with its own save. The accent live preview (app.js) sets --accent on <html> while picking.
+function designPage({ accent, isCustom, name, nameCustom, errors = {}, user, flash }) {
+  const ratio = Theme.contrastOnWhite(accent);
+  const fmtRatio = (r) => r.toFixed(1).replace('.', ',');
+  const nameErrorField = errors.name ? 'name' : null;
+  const body = `
+<main>
+<div class="page">
+<h1>Admin-Einstellungen</h1>
+${adminTabs('design')}
+
+<section class="card">
+  <h2>Name</h2>
+  <p class="muted hint">Erscheint in der Seitenleiste, auf der Anmeldeseite und im Titel des Browser-Tabs.</p>
+  <form method="post" action="/app/design/name" class="flex-col" id="name-form">
+    <div class="field">
+      <label for="brand-name">Name</label>
+      <input id="brand-name" name="name" type="text" maxlength="${Theme.MAX_NAME_LENGTH * 2}" placeholder="${esc(Theme.DEFAULT_NAME)}…" value="${esc(name)}"${fieldInvalidAttrs('name', nameErrorField, 'brand-name')} autocomplete="off">
+      ${fieldErrorSpan('name', nameErrorField, errors.name, 'brand-name')}
+    </div>
+    <div class="row-actions design-actions">
+      <button type="submit">Speichern</button>
+      <button type="submit" name="reset" value="1" class="ghost"${nameCustom ? '' : ' disabled'}>Auf Standard zurücksetzen</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Akzentfarbe</h2>
+  <p class="muted hint">Gilt für alle Nutzer: Links, aktive Navigation, Hover, Fokusrahmen und Diagramme.</p>
+  ${errors.accent ? `<div class="flash error">${esc(errors.accent)}</div>` : ''}
+  <form method="post" action="/app/design" class="flex-col" id="design-form" data-default="${esc(Theme.DEFAULT_ACCENT)}" data-min-contrast="${Theme.MIN_CONTRAST}">
+    <div class="color-pills">
+      <label for="accent">Akzentfarbe <input id="accent" type="color" name="accent" value="${esc(accent)}"></label>
+      <span class="muted hint" id="accent-contrast" role="status">Kontrast auf Weiß: ${fmtRatio(ratio)}:1${ratio >= Theme.MIN_CONTRAST ? '' : ' (zu gering, mindestens ' + fmtRatio(Theme.MIN_CONTRAST) + ':1)'}</span>
+    </div>
+    <div class="design-preview" aria-hidden="true">
+      <a href="#" tabindex="-1">Beispiel-Link</a>
+      <span class="btn">Button</span>
+      <svg viewBox="0 0 120 32" class="design-preview-chart"><path class="chart-area" d="M0 30 L20 22 L40 26 L60 10 L80 18 L100 6 L120 14 L120 32 L0 32 Z"/><path class="chart-line" d="M0 30 L20 22 L40 26 L60 10 L80 18 L100 6 L120 14"/></svg>
+    </div>
+    <div class="row-actions design-actions">
+      <button type="submit">Speichern</button>
+      <button type="submit" name="reset" value="1" class="ghost"${isCustom ? '' : ' disabled'}>Auf Standard zurücksetzen</button>
+    </div>
+  </form>
+</section>
+</div>
+</main>`;
+  return layout({ title: 'Darstellung', body, user, flash, page: 'design', scripts: `<script src="${THEME_JS_URL}"></script>\n` });
+}
+
 function domainsPage({ domains, user, flash, error = null, errorField = null, values = {} }) {
   const v = { origin: '', ...values };
   const body = `
@@ -996,7 +1088,7 @@ ${adminTabs('domains')}
     links: domains,
     theadHtml: `<th>Domain</th><th class="th-date">Hinzugefügt am</th><th class="th-narrow">Links</th><th class="th-actions"></th>`,
     rowsHtml: domains.map((d, i) => domainTableRow(d, i === 0, domains.length > 1)).join(''),
-    emptyText: 'Keine Domain konfiguriert — Kurzlinks nutzen automatisch die Adresse, unter der die Seite aufgerufen wird.',
+    emptyText: 'Keine Domain konfiguriert. Kurzlinks nutzen automatisch die Adresse, unter der die Seite aufgerufen wird.',
     showSearch: false,
   })}
 </section>
@@ -1013,7 +1105,7 @@ function accountPage({ user, flash }) {
 <section class="card card-narrow">
   <h2>Passwort ändern</h2>
   ${user.sso_subject ? `
-  <p class="muted prose">Dieser Account ist über SSO angebunden — das Passwort wird bei deinem Identity Provider verwaltet, nicht in snar.</p>` : `
+  <p class="muted prose">Dieser Account ist über SSO angebunden, das Passwort wird bei deinem Identity Provider verwaltet, nicht in ${esc(themeName)}.</p>` : `
   <form id="password-form" method="post" action="/app/account/password" class="stack">
     <div><label for="cp">Aktuelles Passwort</label>
     <input id="cp" name="current" type="password" autocomplete="current-password" required></div>
@@ -1023,7 +1115,7 @@ function accountPage({ user, flash }) {
     <input id="np3" name="next_repeat" type="password" autocomplete="new-password" minlength="8" required></div>
     <button type="submit">Passwort ändern</button>
   </form>
-  <p class="muted prose mt-15">Nur gegen aktuelles Passwort möglich. Andere Geräte werden dabei abgemeldet — dieses bleibt angemeldet.</p>`}
+  <p class="muted prose mt-15">Nur gegen aktuelles Passwort möglich. Andere Geräte werden dabei abgemeldet, dieses bleibt angemeldet.</p>`}
 </section>
 <section class="card card-narrow">
   <h2>Sitzung</h2>
@@ -1036,4 +1128,4 @@ function accountPage({ user, flash }) {
   return layout({ title: 'Konto', body, user, flash, page: 'account' });
 }
 
-module.exports = { loginPage, dashboard, vaultPage, myVaultPage, linkDetail, staticQrPage, usersPage, domainsPage, accountPage, isExpired, CSS_CONTENT };
+module.exports = { designPage, setTheme, getThemeCss, setUpdateInfo, loginPage, dashboard, vaultPage, myVaultPage, linkDetail, staticQrPage, usersPage, domainsPage, accountPage, isExpired, CSS_CONTENT };
