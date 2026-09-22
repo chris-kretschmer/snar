@@ -9,6 +9,7 @@ const QRCode = require('qrcode');
 const oidc = require('openid-client');
 
 const Theme = require('../public/theme-shared.js');
+const Utm = require('../public/utm-shared.js');
 const {
   stmts, deleteUserAndReassign, updateLinkWithAudit, deleteDomainAndReassign, deleteClicksOlderThanDays, createLink,
   getSessionSecret, getThemeSetting, setThemeSetting, hashPassword, hashPasswordAsync, verifyPasswordAsync, needsRehash,
@@ -658,8 +659,11 @@ const MAX_URL_LENGTH = 2048;
 // Shared form fields for creating & editing
 function readLinkFields(req) {
   const rawUrl = String(req.body.target_url || '').trim();
+  const utm = Utm.readUtmFields(req.body);
   return {
-    targetUrl: ensureScheme(rawUrl),
+    utm,
+    // utm_* typed into the URL field are kept, the separate fields win per key (public/utm-shared.js)
+    targetUrl: Utm.buildTargetUrl(ensureScheme(rawUrl), utm),
     title: String(req.body.title || '').trim().slice(0, 200),
     visibility: req.body.visibility === 'org' ? 'org' : 'privat',
     domain: normalizeDomain(req.body.domain),
@@ -809,7 +813,7 @@ app.get('/app', requireAuth, (req, res) => {
 });
 
 app.post('/app/links', requireAuth, (req, res) => {
-  const { targetUrl, title, visibility, domain, expiresAt } = readLinkFields(req);
+  const { targetUrl, utm, title, visibility, domain, expiresAt } = readLinkFields(req);
   const slug = String(req.body.slug || '').trim();
   // Re-render instead of redirect on failure: keeps entered values and can highlight the field.
   const rerenderDashboard = (error, errorField) => {
@@ -817,7 +821,7 @@ app.post('/app/links', requireAuth, (req, res) => {
       links: stmts.linksByOwner.all(req.user.id), user: req.user, flash: currentFlash(req), domains: getDomains(),
       shortUrl: (l) => shortUrl(l, req),
       error, errorField,
-      values: { target_url: String(req.body.target_url || ''), slug, title, domain, expires_at: String(req.body.expires_at || ''), visibility },
+      values: { target_url: String(req.body.target_url || ''), utm, slug, title, domain, expires_at: String(req.body.expires_at || ''), visibility },
     }));
   };
   if (!isHttpUrl(targetUrl)) return rerenderDashboard('Bitte eine gültige http(s)-URL angeben.', 'target_url');
@@ -952,26 +956,28 @@ app.get('/app/links/:id', requireAuth, loadOwnLink, (req, res) => {
 });
 
 app.post('/app/links/:id/update', requireAuth, loadOwnLink, (req, res) => {
-  const { targetUrl, title, visibility, domain, expiresAt } = readLinkFields(req);
+  const { targetUrl, utm, title, visibility, domain, expiresAt } = readLinkFields(req);
   const ownerOrAdmin = isOwnerOrAdmin(req.user, req.link);
   if (!isHttpUrl(targetUrl) || targetUrl.length > MAX_URL_LENGTH) {
     return renderLinkDetail(req, res, req.link, {
       error: targetUrl.length > MAX_URL_LENGTH ? `URL zu lang (höchstens ${MAX_URL_LENGTH} Zeichen) – nichts geändert.` : 'Ungültige URL – nichts geändert.',
       errorField: 'target_url',
       // keep the submitted visibility (only owner/admin can change it; others see the stored value)
-      values: { target_url: String(req.body.target_url || ''), title, domain, expiresAtLocal: String(req.body.expires_at || ''), visibility: ownerOrAdmin ? visibility : req.link.visibility },
+      values: { target_url: String(req.body.target_url || ''), utm, title, domain, expiresAtLocal: String(req.body.expires_at || ''), visibility: ownerOrAdmin ? visibility : req.link.visibility },
     });
   }
   if (expiresAt === undefined) return flashRedirect(res, `/app/links/${req.link.id}`, 'err', 'Ungültiges Ablaufdatum – nichts geändert.');
   // The target URL is the most security-critical field (phishing/malware redirect): owner/admin only,
   // even on org links. Hard 403 instead of silent discard: the UI locks the field, so a changed
   // value is a bug or a bypass attempt.
-  if (!ownerOrAdmin && targetUrl !== req.link.target_url) {
+  if (!ownerOrAdmin && targetUrl !== Utm.canonicalUrl(req.link.target_url)) {
     return sendError(req, res, 403, 'Nur Besitzer:in oder Admin dürfen die Ziel-URL ändern.');
   }
   // Non-owners of an org link keep the stored visibility, so nobody can lock themselves out by saving.
   const finalVisibility = ownerOrAdmin ? visibility : req.link.visibility;
-  updateLinkWithAudit({ id: req.link.id, userId: req.user.id, oldUrl: req.link.target_url, newUrl: targetUrl, title, visibility: finalVisibility, domain, expiresAt });
+  // Same URL after moving utm_* to the end: keep the stored spelling, no change-log entry for it.
+  const newUrl = targetUrl === Utm.canonicalUrl(req.link.target_url) ? req.link.target_url : targetUrl;
+  updateLinkWithAudit({ id: req.link.id, userId: req.user.id, oldUrl: req.link.target_url, newUrl, title, visibility: finalVisibility, domain, expiresAt });
   flashRedirect(res, `/app/links/${req.link.id}`, 'ok', 'Gespeichert. QR-Code bleibt gültig.');
 });
 

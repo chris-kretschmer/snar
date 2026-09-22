@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const Theme = require('../public/theme-shared.js');
+const Utm = require('../public/utm-shared.js');
 const APP_VERSION = require('../package.json').version;
 
 // Cache busting for /static/*: assets are cached aggressively (maxAge in
@@ -339,6 +340,57 @@ function domainField(current, domains) {
     </div>`;
 }
 
+// "Erweiterte Link-Details": the utm_* parameters as separate fields, joined to the target URL on save
+// (public/utm-shared.js). The panel is closed unless a value is set; readonly for those who may not change the URL.
+const UTM_FIELDS = [
+  ['source', 'utm_source', 'partner'],
+  ['medium', 'utm_medium', 'email'],
+  ['campaign', 'utm_campaign', 'aktion'],
+  ['term', 'utm_term', 'stichwort'],
+  ['content', 'utm_content', 'banner'],
+];
+// open: true only right after a failed submit that had parameters set (server.js re-render, see dashboard()/
+// linkDetail() below) – a saved link never opens the card on its own on a plain page load any more, the
+// effective-URL line under Ziel-URL (utmUrlLine()) says so without needing the card open. app.js keeps the
+// label in sync when toggling client-side.
+// standalone: detail page only – the button sits by itself right next to utmCard() instead of inside the
+// create form's button row, and is hidden whenever the card is open (never both visible, no second "close"
+// control needed beyond the card's own "×", see .utm-close in utmCard()).
+function utmToggle(open, standalone = false) {
+  return `<button type="button" class="ghost utm-toggle" aria-expanded="${open}" aria-controls="utm-panel" data-needs-js disabled${standalone ? ' data-standalone' : ''}${standalone && open ? ' hidden' : ''}>${open ? 'Schließen' : 'Erweiterte Link-Details'}</button>`;
+}
+// formId: form= on every input instead of nesting them inside the <form> (like the "Speichern" button on the
+// detail page already does), so the card can sit outside it – see utmCard().
+function utmFields(utm, locked, formId) {
+  return UTM_FIELDS.map(([key, name, example]) => `<div class="field">
+    <label for="${name}">${name}</label>
+    <input id="${name}" name="${name}" type="text" maxlength="${Utm.MAX_UTM_VALUE}" placeholder="${example}" value="${esc(utm[key] || '')}"${locked ? ' readonly' : ''}${formId ? ` form="${formId}"` : ''} spellcheck="false" autocomplete="off">
+  </div>`).join('');
+}
+// Create page: fieldset nested in the create form, right after "Erstellen" (no other card next to it).
+function utmPanel(utm, open) {
+  return `<fieldset class="utm-panel" id="utm-panel"${open ? '' : ' hidden'}>
+    <legend>Kampagnen-Parameter</legend>
+    <div class="grid-form">${utmFields(utm, false, null)}</div>
+  </fieldset>`;
+}
+// Detail page: own full-width card below .detail-grid instead of growing the edit-card – that grid has the
+// QR code next to it, gaining or losing several fields' worth of height there left an odd gap either way. Its
+// open/close trigger (utmToggle(open, true)) sits up in .detail-head next to "Speichern" instead, the main
+// action for this form, the same pairing the create page already has with "Erstellen".
+function utmCard(utm, open, locked, formId) {
+  return `<section class="card utm-card" id="utm-panel"${open ? '' : ' hidden'}>
+    <div class="card-head"><h2>Kampagnen-Parameter</h2><button type="button" class="ghost utm-close" data-needs-js disabled>Schließen</button></div>
+    <div class="grid-form">${utmFields(utm, locked, formId)}</div>
+  </section>`;
+}
+// Small line under the Ziel-URL field once parameters are set, open or not: the field itself only ever shows
+// the base URL (utmFields()/splitUtm()), so this is the only place the redirect target is shown in full.
+function utmUrlLine(targetUrl, utm) {
+  if (!Object.keys(utm).length) return '';
+  return `<p class="muted hint utm-url-line">Aufgerufen wird: <span translate="no">${esc(Utm.buildTargetUrl(targetUrl, utm))}</span></p>`;
+}
+
 // Search/pagination table shared by dashboard, vaults, user & domain admin;
 // app.js hooks in via #links-search/.linktable/.page-size-btn/#links-prev/
 // #links-next. showSearch=false (domains): app.js's search does nothing
@@ -401,8 +453,10 @@ function linkTableRow(l, short, { extraColumn = null } = {}) {
 // error/errorField/values: only set on the direct re-render after a failed
 // POST /app/links (see server.js), so the form keeps its input. errorField
 // null with error set (generic DB fallback) shows a plain banner.
-function dashboard({ links, shortUrl, domains, user, flash, error = null, errorField = null, values = {} }) {
-  const v = { target_url: '', slug: '', title: '', domain: domains[0] || '', expires_at: '', visibility: 'privat', ...values };
+function dashboard({ links, shortUrl, domains, user, flash, error = null, errorField = null, values = null }) {
+  const isRerender = !!values;
+  const v = { target_url: '', slug: '', title: '', domain: domains[0] || '', expires_at: '', visibility: 'privat', utm: {}, ...values };
+  const utmOpen = isRerender && Object.keys(v.utm).length > 0;
   const body = `
 <main>
 <div class="page">
@@ -415,6 +469,7 @@ function dashboard({ links, shortUrl, domains, user, flash, error = null, errorF
         <label for="target">Ziel-URL</label>
         <input id="target" name="target_url" type="text" maxlength="2048" placeholder="https://…" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required autocomplete="off">
         ${fieldErrorSpan('target_url', errorField, error, 'target')}
+        ${utmUrlLine(v.target_url, v.utm)}
       </div>
     </div>
     <div class="grid-form">
@@ -438,12 +493,14 @@ function dashboard({ links, shortUrl, domains, user, flash, error = null, errorF
     <div class="radio-row">
       ${visibilityRadios(v.visibility)}
       <div class="create-actions">
+        ${utmToggle(utmOpen)}
         <button type="submit" id="create-btn" class="btn-create">
           <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><path d="M7.5 1.5v12M1.5 7.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
           Erstellen
         </button>
       </div>
     </div>
+    ${utmPanel(v.utm, utmOpen)}
   </form>
 </section>
 
@@ -651,7 +708,9 @@ function splitBreakdownList(rows, allClicks, { title = '', id = '', limit = 5 } 
 // (see renderLinkDetail() in server.js), like dashboard(). values overrides the
 // DB fields; data-utc is skipped then, as it only fits the stored value.
 function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expired, user, flash, page = 'dashboard', canEditRestricted = true, canDelete = true, audit = [], error = null, errorField = null, values = null }) {
-  const v = values || { target_url: link.target_url, title: link.title, domain: link.domain, expiresAtLocal };
+  const split = Utm.splitUtm(link.target_url);
+  const v = values || { target_url: split.base, utm: split.utm, title: link.title, domain: link.domain, expiresAtLocal };
+  const utmOpen = !!values && Object.keys(v.utm).length > 0;
   const body = `
 <main>
 <div class="page">
@@ -661,7 +720,10 @@ function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expir
   <h1 translate="no">${esc(stripProto(origin))}<span class="accent">/${esc(link.slug)}</span></h1>
   <button type="button" class="copy-icon-btn" data-copy="${esc(short)}" title="Link kopieren" aria-label="Link kopieren">${icon('copy', 'copy-icon')}</button>
   ${expired ? `<span class="badge expired">Abgelaufen</span>` : link.expires_at ? `<span class="muted">läuft ab <time class="local-time" datetime="${parseDbDate(link.expires_at).toISOString()}">${fmtDate(link.expires_at)}</time></span>` : ''}
-  <button type="submit" form="edit-form" class="head-action">Speichern</button>
+  <div class="head-actions">
+    ${utmToggle(utmOpen, true)}
+    <button type="submit" form="edit-form" class="head-action">Speichern</button>
+  </div>
 </div>
 
 <div class="detail-grid">
@@ -681,6 +743,7 @@ function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expir
       <input id="target" name="target_url" type="text" value="${esc(v.target_url)}"${fieldInvalidAttrs('target_url', errorField, 'target')} required${canEditRestricted ? '' : ' readonly'} autocomplete="off">
       ${fieldErrorSpan('target_url', errorField, error, 'target')}
       ${canEditRestricted ? '' : '<span class="muted hint">Nur Besitzer:in/Admin können die Ziel-URL ändern</span>'}
+      ${utmUrlLine(v.target_url, v.utm)}
     </div>
     <div class="grid-form">
       <div class="field">
@@ -697,6 +760,8 @@ function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expir
   </form>
 </section>
 </div>
+
+${utmCard(v.utm, utmOpen, !canEditRestricted, 'edit-form')}
 
 ${kpiCard({ link, stats })}
 

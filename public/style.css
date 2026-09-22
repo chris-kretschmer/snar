@@ -188,6 +188,9 @@ input, select, textarea {
   background: transparent; border: none; border-bottom: 2px solid var(--line2); border-radius: 0;
 }
 .field-error { display: block; margin-top: 6px; font-size: 12.5px; color: var(--danger); }
+/* Ziel-URL zeigt nur die Basis (Kampagnen-Parameter stecken in eigenen Feldern, siehe .utm-panel/.utm-card):
+   diese Zeile darunter sagt, welche URL beim Aufruf tatsächlich verwendet wird. */
+.utm-url-line { margin: 6px 0 0; overflow-wrap: anywhere; }
 input.invalid, textarea.invalid { border-bottom-color: var(--danger); }
 input.invalid:focus-visible { box-shadow: inset 0 -2px 0 0 var(--danger); }
 /* Chrome/Edge erzwingen beim Autofill eine eigene Hintergrundfarbe; nur der box-shadow-inset-Trick gewinnt zuverlässig. */
@@ -326,6 +329,32 @@ button:disabled, button:disabled:hover {
 .radio-row input[type=radio] { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--accent); }
 
 .create-actions { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+/* Erweiterte Link-Details: UTM-Felder, aufklappbar. Auf der Erstellen-Seite sitzt der Button in der
+   Sichtbarkeit-Zeile neben "Erstellen". Auf der Detailseite steht er oben in .detail-head neben "Speichern"
+   (data-standalone, siehe app.js) – dieselbe Paarung mit der Haupt-Aktion wie auf der Erstellen-Seite, statt
+   in der fachlich unabhängigen Sichtbarkeit-Zeile oder frei schwebend zwischen zwei Karten. */
+.utm-toggle { padding: 9px 18px; white-space: nowrap; }
+.utm-toggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+/* Eigenes CSS schlägt die eingebaute [hidden]-Regel des Browsers, wie bei .utm-panel[hidden]/.utm-card[hidden]. */
+.utm-toggle[hidden] { display: none; }
+/* .utm-panel: fieldset nested in the create form. .utm-card: own card below .detail-grid on the detail page
+   (utmCard() in views.js), its inputs point back at #edit-form via form=, like the "Speichern" button. Same
+   padding and heading-to-content gap as .edit-card (padding-block 18/24px, +7px like #edit-form), so the two
+   stacked cards on the detail page read as one rhythm; flex column so the 7px doesn't collapse into the
+   .card-head's own 10px margin (like .detail-grid > .card already relies on). */
+.utm-panel { margin: 0; padding: 16px 0 0; border: 0; border-top: 1px solid var(--line); min-width: 0; }
+.utm-panel[hidden] { display: none; }
+.utm-panel legend { padding: 0 8px 0 0; font-size: 10.5px; font-weight: 700; color: var(--muted2); text-transform: uppercase; letter-spacing: .08em; }
+.utm-card { display: flex; flex-direction: column; padding: 24px 24px 18px; }
+/* [hidden] alone isn't enough once an element has its own display value (here flex): author CSS beats the
+   browser's built-in "[hidden] { display: none }", same as .utm-panel[hidden] above. */
+.utm-card[hidden] { display: none; }
+.utm-card .grid-form { margin-top: 7px; }
+/* Schließt die Karte direkt an Ort und Stelle (der Toggle-Button davor ist während sie offen ist ja
+   ausgeblendet, siehe app.js). Normaler ghost-Button, nur an den rechten Rand der Kopfzeile geschoben. */
+.utm-close { margin-left: auto; }
+.utm-panel .grid-form, .utm-card .grid-form { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 760px) { .utm-panel .grid-form, .utm-card .grid-form { grid-template-columns: minmax(0, 1fr); } }
 .btn-create {
   display: inline-flex; align-items: center; gap: 9px; height: 44px; padding: 0 24px;
   border: 1px solid var(--ink); border-radius: 0; font-size: 13px; font-weight: 700;
@@ -361,7 +390,10 @@ button:disabled, button:disabled:hover {
 .detail-head h1 .accent { color: var(--accent); }
 /* min-width:0, sonst sprengt ein langer unbrechbarer Domain+Slug (bis 64 Zeichen) auf schmalen Screens die Seite (min-width:auto-Falle). */
 .detail-head h1 { min-width: 0; overflow-wrap: break-word; }
-.detail-head .head-action { margin-left: auto; padding: 9px 36px; }
+/* Wrapper statt margin-left:auto direkt auf .head-action: so bleiben Toggle und Speichern als Paar rechts,
+   auch wenn der Toggle (hidden, siehe app.js) mal aus dem Fluss verschwindet. */
+.detail-head .head-actions { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+.detail-head .head-action { padding: 9px 36px; }
 /* minmax(0, 1fr) instead of 1fr: a bare 1fr track keeps min-width:auto, so wide content overflows it, notably
    in the tablet range (sidebar visible, little room). */
 .detail-grid { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 22px; }
@@ -378,7 +410,6 @@ button:disabled, button:disabled:hover {
   padding: 18px; text-align: center; box-shadow: var(--shadow);
   display: flex; flex-direction: column; gap: 12px;
 }
-/* SVG/PNG ganz unten, auf einer Linie mit der Sichtbarkeit-Zeile. */
 /* Tablet: Sidebar da, für 220px QR-Spalte + Formular reicht der Platz nicht; untereinander, QR-Box begrenzt. */
 @media (width > 760px) and (width <= 1040px) {
   .detail-grid { grid-template-columns: minmax(0, 1fr); }

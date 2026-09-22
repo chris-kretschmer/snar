@@ -944,6 +944,34 @@ if (updateBox) {
   });
 }
 
+// "Erweiterte Link-Details" (views.js utmToggle/utmPanel/utmCard): opens/closes the utm_* fields, label
+// matches views.js's two states ("Erweiterte Link-Details" / "Schließen"). On the detail page the toggle is
+// standalone (data-standalone) right next to the card (utmCard()) and hidden whenever the card is open – the
+// card's own "×" (.utm-close) is then the only way back, so exactly one control is ever visible. On the create
+// page the toggle stays inside the form next to "Erstellen" and is always visible (not standalone).
+const utmToggle = document.querySelector('.utm-toggle');
+const utmPanel = document.getElementById('utm-panel');
+const utmClose = document.querySelector('.utm-close');
+const utmStandalone = utmToggle?.hasAttribute('data-standalone');
+if (utmToggle && utmPanel) {
+  const setOpen = (open) => {
+    utmPanel.hidden = !open;
+    utmToggle.setAttribute('aria-expanded', String(open));
+    utmToggle.textContent = open ? 'Schließen' : 'Erweiterte Link-Details';
+    if (utmStandalone) utmToggle.hidden = open;
+  };
+  utmToggle.addEventListener('click', () => {
+    const open = utmPanel.hidden;
+    setOpen(open);
+    // moving focus into/back out of the panel, like the mobile sidebar (closeSidebar/openSidebar) already does
+    if (utmStandalone && open) utmPanel.querySelector('input')?.focus();
+  });
+  utmClose?.addEventListener('click', () => {
+    setOpen(false);
+    utmToggle.focus();
+  });
+}
+
 // Destructive buttons ship disabled (views.js) and are enabled only now, after the
 // confirmation handlers above are attached: without JS, or on a slow connection,
 // nothing can be deleted before the confirmation dialog exists.
