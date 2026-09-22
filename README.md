@@ -86,7 +86,7 @@ src/*.js        Kleine Module: Klick-Regeln, Login-Limit, SSO-Zugang, Update-Hin
 test/           Tests (`npm test`, Node-Testrunner)
 src/views.js    Server-gerenderte HTML-Templates (inkl. SVG-Chart)
 public/         Stylesheet + minimales Client-JS (Dropdowns, Datepicker, Suche, Kopieren)
-Dockerfile      node:22-alpine (per Digest fixiert), mehrstufig, unprivilegierter User
+Dockerfile      node:24-alpine (per Digest fixiert), mehrstufig, unprivilegierter User
 compose.yaml    Deployment mit Volume, gehärtet (read-only, ohne Capabilities), Limits, Log-Rotation
 ```
 
