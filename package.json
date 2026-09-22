@@ -1,6 +1,6 @@
 {
   "name": "snar",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "Self-hosted Short-Link- & QR-Code-Tool mit Organisations-Tresor",
   "license": "AGPL-3.0-or-later",

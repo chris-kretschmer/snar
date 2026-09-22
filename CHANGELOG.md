@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-22
+
 ### Added
 - Optional `CLICK_RETENTION_DAYS` deletes old clicks daily; `SESSION_SECRET` keeps the session secret out of the database; `BIND_ADDRESS`, `COOKIE_SECURE`, `OIDC_ALLOWED_GROUPS` and `OIDC_ALLOWED_EMAIL_DOMAINS` (see README).
 - Deleted SSO accounts are blocked and can be released again under "Gesperrte SSO-Zugänge" in the user administration.
@@ -13,10 +15,11 @@
 - Shared chart maths for server and browser in `public/chart-shared.js` (new file), so the server render and the client redraw cannot drift apart.
 
 ### Changed
-- **Upgrade note:** the port is now published on `127.0.0.1` only (`BIND_ADDRESS=0.0.0.0` restores the old behaviour); put a reverse proxy with HTTPS in front.
+- **Breaking (the reason for 2.0.0):** the port is now published on `127.0.0.1` only. Installations that reach snar directly on the server address stop working until `BIND_ADDRESS=0.0.0.0` is set in `.env`; the better setup is a reverse proxy with HTTPS in front (see README). Going back to 1.x is not supported after the first start (schema migrations, password hash format).
+- Dependencies updated: better-sqlite3 13.0.3 (SQLite 3.53), openid-client 6.8.8, compression 1.8.2; the CI uses actions/checkout 7 and actions/setup-node 7. Dependabot checks npm, Docker and Actions once a month.
 - Clicks are counted only for real visits: no `HEAD` requests, no link previews or crawlers, at most one click per visitor and link every 5 seconds and 120 per minute. The redirect always works.
 - `links.clicks_total` is kept by database triggers (migration), so the link lists no longer count every click of every row.
-- Password hashes carry their scrypt parameters and use stronger settings (async, no blocking of the server); older hashes are upgraded on the next login. Going back to an older version is not supported afterwards (schema migrations, hash format).
+- Password hashes carry their scrypt parameters and use stronger settings (async, no blocking of the server); older hashes are upgraded on the next login.
 - The `Dockerfile` pins the base image by digest; `compose.yaml` runs the container read-only without capabilities, with `init`, memory and process limits; `ADMIN_PASSWORD` is only needed for the first start; `/healthz` checks the database.
 - Statistics ranges share one bucket builder (output verified identical); wording unified (Konto, Nutzername, Kurzlink, Gemeinsamer Tresor); errors use one small error page.
 - Link detail page reworked: KPI card, click chart with a rounded Y axis (including 0) and a dashed, still running last period, distribution lists with a "Weitere" dialog, paginated latest clicks.
@@ -63,5 +66,6 @@
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/chris-kretschmer/snar/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/chris-kretschmer/snar/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/chris-kretschmer/snar/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/chris-kretschmer/snar/releases/tag/v1.0.0
