@@ -262,7 +262,7 @@ const stmts = {
   deleteSsoBlocked: db.prepare(`DELETE FROM sso_blocked WHERE rowid = ?`),
   // Retention (CLICK_RETENTION_DAYS): the delete trigger keeps links.clicks_total in step.
   deleteClicksOlderThan: db.prepare(`DELETE FROM clicks WHERE ts < datetime('now', ?)`),
-  insertClick: db.prepare(`INSERT INTO clicks (link_id, referrer, device, browser, lang) VALUES (?, ?, ?, ?, ?)`),
+  insertClick: db.prepare(`INSERT INTO clicks (link_id, referrer, device, browser, lang, channel) VALUES (?, ?, ?, ?, ?, ?)`),
   // Buckets in server local time ('localtime', TZ set in the container) so
   // "today" starts at local midnight; storage stays UTC, window starts are
   // converted back to UTC for comparing against ts.
@@ -300,9 +300,11 @@ const stmts = {
   `),
   // The three splits feed the top-5 lists and the "Weitere" dialog
   // (splitBreakdownList() in views.js); capped at 100 rows, the rest is a static tail row.
+  // Raw host names plus the channel; sources.js turns them into platform names. A QR scan counts as one row, whatever
+  // referrer came with it.
   topReferrers: db.prepare(`
-    SELECT CASE WHEN referrer = '' THEN '(direkt / QR-Scan)' ELSE referrer END AS ref, COUNT(*) AS n
-    FROM clicks WHERE link_id = ? GROUP BY ref ORDER BY n DESC LIMIT 100
+    SELECT CASE WHEN channel = 'qr' THEN '' ELSE referrer END AS referrer, channel, COUNT(*) AS n
+    FROM clicks WHERE link_id = ? GROUP BY 1, channel ORDER BY n DESC LIMIT 100
   `),
   deviceSplit: db.prepare(`SELECT device, COUNT(*) AS n FROM clicks WHERE link_id = ? GROUP BY device ORDER BY n DESC`),
   browserSplit: db.prepare(`SELECT browser, COUNT(*) AS n FROM clicks WHERE link_id = ? GROUP BY browser ORDER BY n DESC LIMIT 100`),
@@ -318,9 +320,9 @@ const stmts = {
   // Keyset pagination instead of LIMIT/OFFSET: id follows click order and, unlike
   // ts, needs no tie-breaker for same-second rows; the seek stays O(log n) at
   // any depth. Cursor handling: renderLinkDetail() in server.js.
-  recentClicksFirst: db.prepare(`SELECT id, ts, referrer, device, browser, lang FROM clicks WHERE link_id = ? ORDER BY id DESC LIMIT ?`),
-  recentClicksOlder: db.prepare(`SELECT id, ts, referrer, device, browser, lang FROM clicks WHERE link_id = ? AND id < ? ORDER BY id DESC LIMIT ?`),
-  recentClicksNewer: db.prepare(`SELECT id, ts, referrer, device, browser, lang FROM clicks WHERE link_id = ? AND id > ? ORDER BY id ASC LIMIT ?`),
+  recentClicksFirst: db.prepare(`SELECT id, ts, referrer, channel, device, browser, lang FROM clicks WHERE link_id = ? ORDER BY id DESC LIMIT ?`),
+  recentClicksOlder: db.prepare(`SELECT id, ts, referrer, channel, device, browser, lang FROM clicks WHERE link_id = ? AND id < ? ORDER BY id DESC LIMIT ?`),
+  recentClicksNewer: db.prepare(`SELECT id, ts, referrer, channel, device, browser, lang FROM clicks WHERE link_id = ? AND id > ? ORDER BY id ASC LIMIT ?`),
 };
 
 const ALPHABET = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';

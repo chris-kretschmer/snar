@@ -61,7 +61,7 @@ test('user names are unique regardless of case', () => {
 
 test('links.clicks_total follows inserts, retention deletes and link deletion', () => {
   const l = link('counter-1');
-  for (let i = 0; i < 3; i++) stmts.insertClick.run(l.id, '', '', '', '');
+  for (let i = 0; i < 3; i++) stmts.insertClick.run(l.id, '', '', '', '', '');
   assert.equal(stmts.linkById.get(l.id).clicks_total, 3);
   assert.equal(stmts.linksByOwner.all(1).find((x) => x.id === l.id).clicks_total, 3);
   // age two clicks, then apply the retention rule
@@ -73,6 +73,23 @@ test('links.clicks_total follows inserts, retention deletes and link deletion', 
   assert.equal(stmts.linkById.get(l.id).clicks_total, 1);
   stmts.deleteLink.run(l.id); // cascade deletes the click and fires the trigger on a vanishing row
   assert.equal(stmts.linkById.get(l.id), undefined);
+});
+
+test('clicks.channel: QR scans are stored with their channel and counted as one source, old rows stay empty', () => {
+  const l = link('channel-1');
+  stmts.insertClick.run(l.id, 'l.instagram.com', 'Mobil', 'Safari', 'de', '');
+  stmts.insertClick.run(l.id, 'l.instagram.com', 'Mobil', 'Safari', 'de', '');
+  stmts.insertClick.run(l.id, '', 'Mobil', 'Chrome', 'de', 'qr');
+  stmts.insertClick.run(l.id, 'lens.google.com', 'Mobil', 'Chrome', 'de', 'qr'); // a scan through an app that sends a referrer
+  stmts.insertClick.run(l.id, '', 'Desktop', 'Firefox', 'de', '');
+  const rows = stmts.topReferrers.all(l.id);
+  const by = (referrer, channel) => rows.find((r) => r.referrer === referrer && r.channel === channel)?.n;
+  assert.equal(by('l.instagram.com', ''), 2);
+  assert.equal(by('', 'qr'), 2, 'the referrer of a QR scan is dropped, both scans are one row');
+  assert.equal(by('', ''), 1);
+  assert.equal(rows.length, 3);
+  assert.deepEqual(stmts.recentClicksFirst.all(l.id, 10).map((c) => c.channel), ['', 'qr', 'qr', '', '']);
+  stmts.deleteLink.run(l.id);
 });
 
 test('deleting an SSO user blocks the subject until it is released', () => {

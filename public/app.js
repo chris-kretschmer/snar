@@ -716,6 +716,51 @@ if (linkRows.length) {
   render();
 }
 
+// Selection in the link lists (views.js bulkBar()/linkTableRow()): "select all" acts on the rows the current search
+// leaves, the count covers every ticked row (also ones the search hides), and the downloads need at least one.
+// Without JS the bar still works: tick rows one by one, then pick a download.
+const bulkForm = document.getElementById('bulk-form');
+if (bulkForm) {
+  const boxes = [...document.querySelectorAll('.linktable tbody input[name="ids"]')];
+  const allBox = document.getElementById('bulk-all');
+  const countEl = document.getElementById('bulk-count');
+  const clearBtn = bulkForm.querySelector('.bulk-clear');
+  const actionBtns = bulkForm.querySelectorAll('.bulk-actions button');
+  const qrMenu = bulkForm.querySelector('.bulk-menu');
+  const qrMenuSummary = qrMenu.querySelector('summary');
+  const inSearch = () => {
+    const q = linksSearch ? linksSearch.value.trim().toLowerCase() : '';
+    return boxes.filter((box) => (box.closest('tr').dataset.search || '').includes(q));
+  };
+  const syncBulk = () => {
+    const picked = boxes.filter((b) => b.checked).length;
+    const shown = inSearch();
+    const shownPicked = shown.filter((b) => b.checked).length;
+    allBox.checked = shown.length > 0 && shownPicked === shown.length;
+    allBox.indeterminate = shownPicked > 0 && shownPicked < shown.length;
+    countEl.textContent = picked ? `${picked} ausgewählt` : 'Nichts ausgewählt';
+    clearBtn.hidden = !picked;
+    actionBtns.forEach((b) => { b.disabled = !picked; });
+    // A <details> cannot be disabled: style it like a disabled button, keep it shut, tell assistive tech.
+    qrMenu.classList.toggle('is-disabled', !picked);
+    qrMenuSummary.setAttribute('aria-disabled', String(!picked));
+    qrMenuSummary.title = picked ? '' : 'Bitte zuerst Links auswählen';
+    if (!picked) qrMenu.open = false;
+  };
+  qrMenuSummary.addEventListener('click', (e) => { if (qrMenu.classList.contains('is-disabled')) e.preventDefault(); });
+  // Close on a click elsewhere, on Esc (focus goes back to the summary) and after a format was picked.
+  document.addEventListener('click', (e) => { if (qrMenu.open && !qrMenu.contains(e.target)) qrMenu.open = false; });
+  qrMenu.addEventListener('keydown', (e) => { if (e.key === 'Escape' && qrMenu.open) { qrMenu.open = false; qrMenuSummary.focus(); } });
+  qrMenu.addEventListener('click', (e) => { if (e.target.closest('button')) setTimeout(() => { qrMenu.open = false; }, 0); });
+  allBox.closest('label').hidden = false;
+  allBox.addEventListener('change', () => { inSearch().forEach((b) => { b.checked = allBox.checked; }); syncBulk(); });
+  clearBtn.addEventListener('click', () => { boxes.forEach((b) => { b.checked = false; }); syncBulk(); });
+  boxes.forEach((b) => b.addEventListener('change', syncBulk));
+  linksSearch?.addEventListener('input', syncBulk);
+  window.addEventListener('pageshow', syncBulk); // the browser restores ticked boxes on back/reload, without a change event
+  syncBulk();
+}
+
 // "Erstellen" button: usable without JS (target URL has `required`); with JS
 // disabled until a target URL is entered, reason in the title.
 const createBtn = document.getElementById('create-btn');
@@ -728,6 +773,30 @@ if (createBtn && targetInput) {
   };
   targetInput.addEventListener('input', syncCreateState);
   syncCreateState();
+}
+
+// QR generator "Erzeugen": same idea. Which fields must be filled depends on the active tab (the same rules as
+// buildQrTypeContent on the server); without JS the button stays enabled and the server answers with its message.
+const qrForm = document.getElementById('qr-form');
+const qrGenerateBtn = qrForm && qrForm.querySelector('.btn-create');
+if (qrGenerateBtn) {
+  const REQUIRED = {
+    url: { fields: ['url_value'], hint: 'Bitte zuerst eine Ziel-URL eingeben' },
+    text: { fields: ['data'], hint: 'Bitte zuerst einen Inhalt eingeben' },
+    wlan: { fields: ['wlan_ssid'], hint: 'Bitte zuerst die SSID eingeben' },
+    epc: { fields: ['epc_name', 'epc_iban'], hint: 'Bitte zuerst Begünstigten und IBAN eingeben' },
+  };
+  const syncQrState = () => {
+    const type = qrForm.querySelector('input[name=qr_type]:checked')?.value;
+    const rule = REQUIRED[type];
+    if (!rule) { qrGenerateBtn.disabled = false; return; }
+    const missing = rule.fields.some((name) => qrForm.elements[name].value.trim() === '');
+    qrGenerateBtn.disabled = missing;
+    qrGenerateBtn.title = missing ? rule.hint : 'QR-Code erzeugen';
+  };
+  qrForm.addEventListener('input', syncQrState);
+  qrForm.addEventListener('change', syncQrState);
+  syncQrState();
 }
 
 // Stats range chips: redraw the chart client-side (all ranges arrive with the

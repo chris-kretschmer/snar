@@ -1,0 +1,17 @@
+snar
+Copyright (C) the snar authors. Licensed under the GNU Affero General Public License v3.0 or later (see LICENSE).
+
+Third-party data
+----------------
+
+src/data/sources.json
+  Lists of social networks, search engines and AI assistants (host names), used to show a readable platform name
+  ("Instagram") instead of a referrer host name ("l.instagram.com").
+  Source:  https://github.com/matomo-org/searchengine-and-social-list
+  Authors: the contributors of that list (maintained by the Matomo project)
+  License: CC0 1.0 Universal (public domain dedication), see the LICENSE file of that repository
+  The file is rebuilt with `node scripts/update-sources.js`; its "_meta" block records the commit and the date.
+  snar does not download anything at runtime.
+
+src/data/sources-own.json
+  Our own additions and renames, part of snar and under its license.

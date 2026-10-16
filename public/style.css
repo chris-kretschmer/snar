@@ -705,6 +705,66 @@ button:disabled, button:disabled:hover {
 }
 .linktable tbody tr:last-child td { border-bottom: none; }
 .linktable tbody tr:hover { background: var(--bg); }
+/* Auswahl in den Link-Listen (Dashboard, Tresore): Checkbox-Spalte plus Leiste über der Tabelle, siehe
+   bulkBar()/linkTableRow() in views.js. Ausgewählte Zeilen bekommen den weichen Akzent-Hintergrund. */
+.linktable tbody tr:has(.bulk-pick input:checked) { background: var(--accent-soft); }
+.linktable .check-col, .linktable .check-cell { padding-right: 0; }
+/* Die Spalte bleibt so schmal wie ihr Inhalt (24px Rand + 16px Checkbox), auch auf breiten Bildschirmen. */
+.linktable th.check-col { width: 1%; white-space: nowrap; }
+/* Label-Reset (das Basis-label ist klein/fett/Versalien) und eine Trefferfläche von 32px um die 16px-Checkbox. */
+/* display:flex statt inline-flex: ein Inline-Element sitzt auf der Grundlinie der Zeile und die Checkbox rutscht ~2px über die Textmitte. */
+.bulk-pick, .bulk-all { display: flex; width: fit-content; margin: -8px; padding: 8px; cursor: pointer; text-transform: none; letter-spacing: normal; }
+.bulk-pick input, .bulk-all input { width: 16px; height: 16px; margin: 0; padding: 0; flex: none; accent-color: var(--accent); cursor: pointer; }
+/* Der Unterstrich-Fokus der Textfelder passt nicht auf eine Checkbox. */
+.bulk-pick input:focus-visible, .bulk-all input:focus-visible { box-shadow: none; outline: 2px solid var(--accent); outline-offset: 2px; }
+.bulk-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; padding: 12px 24px; background: var(--bg); border-bottom: 1px solid var(--line2); }
+/* Eigenes display schlägt das [hidden] des Browsers (wie bei .utm-card[hidden]). */
+.bulk-all[hidden], .bulk-clear[hidden] { display: none; }
+.bulk-count { font-size: 12.5px; color: var(--muted2); }
+.bulk-clear { padding: 6px 10px; font-size: 11.5px; }
+.bulk-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+.bulk-actions > button { padding: 7px 14px; font-size: 11.5px; }
+/* Die drei QR-Formate in einem Menü (<details>, funktioniert auch ohne JS). Das Menü ragt über die Tabelle, deshalb
+   darf die Karte hier nicht abschneiden (sonst würde es bei wenigen Zeilen unten abgeschnitten). */
+.table-card:has(.bulk-bar) { overflow: visible; }
+.bulk-bar { position: relative; }
+/* Im Normalfall sitzt die Auswahl-Leiste in der Toolbar neben der Suche (eine Zeile statt zwei): sie füllt den Rest der
+   Zeile, die Download-Knöpfe rutschen nach rechts vor die Seitengröße und die Pfeile. */
+.table-toolbar:has(.bulk-bar.in-toolbar) .search-input { margin-right: 0; }
+.bulk-bar.in-toolbar { flex: 1 1 320px; min-width: 0; padding: 0; background: none; border-bottom: 0; }
+.bulk-menu { position: relative; }
+.bulk-menu > summary {
+  display: inline-flex; align-items: center; gap: 10px; list-style: none; cursor: pointer; user-select: none;
+  padding: 7px 14px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.bulk-menu > summary::-webkit-details-marker { display: none; }
+/* Pfeil aus zwei Rändern statt Bild; dreht sich beim Öffnen. */
+.bulk-menu > summary::after {
+  content: ''; width: 6px; height: 6px; margin-top: -3px; flex: none;
+  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg);
+}
+.bulk-menu[open] > summary::after { margin-top: 3px; transform: rotate(-135deg); }
+.bulk-menu > summary:hover, .bulk-menu[open] > summary { border-color: var(--accent); color: var(--accent); }
+.bulk-menu > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Nichts angehakt: wie ein gesperrter Button (app.js setzt die Klasse und verhindert das Öffnen). */
+.bulk-menu.is-disabled > summary, .bulk-menu.is-disabled > summary:hover { cursor: not-allowed; color: var(--muted3); border-color: var(--line2); }
+.bulk-menu-list {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 100%;
+  display: flex; flex-direction: column; padding: 6px;
+  background: var(--surface); border: 1px solid var(--ink); border-radius: var(--radius-sm); box-shadow: var(--shadow-hover);
+}
+.bulk-menu-list button {
+  all: unset; box-sizing: border-box; display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+  padding: 9px 10px; border-radius: var(--radius-xs); font-size: 13.5px; font-weight: 700; color: var(--ink); cursor: pointer;
+}
+.bulk-menu-list button:hover, .bulk-menu-list button:focus-visible { background: var(--bg); }
+.bulk-menu-list button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+@media (max-width: 520px) {
+  /* Schmale Bildschirme: das Menü hängt an der ganzen Leiste statt am Knopf, damit es nie über den Rand ragt. */
+  .bulk-menu { position: static; }
+  .bulk-menu-list { left: 0; right: 0; min-width: 0; }
+}
 .linktable .nowrap { white-space: nowrap; }
 .linktable .url-cell { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .linktable .url-cell a { color: var(--muted); text-decoration: none; }
@@ -746,6 +806,8 @@ button:disabled, button:disabled:hover {
 .detail-head .copy-icon-btn.copied, .detail-head .copy-icon-btn.copied:hover { background: transparent; border-color: var(--success); color: var(--success); }
 
 /* Statischer QR-Code Generator: nutzt .qrbox/.detail-grid der Detailseite; der QR-Code steckt hier als <svg> statt <img>. */
+/* Noch keine Vorschau: Hinweistext mittig in der Box (waagerecht und senkrecht), Box nie niedriger als mit QR-Code. */
+.qrbox-empty { justify-content: center; align-items: center; min-height: 260px; }
 .qrbox .dl form { flex: 1; margin: 0; }
 .qrbox .dl form .btn { width: 100%; }
 .color-pills { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }

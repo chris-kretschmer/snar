@@ -22,4 +22,4 @@ function createSsoAccess({ groups, domains } = {}) {
   };
 }
 
-module.exports = { createSsoAccess, splitList };
+module.exports = { createSsoAccess };

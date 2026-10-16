@@ -18,8 +18,15 @@ const {
 const views = require('./views');
 const { startUpdateCheck } = require('./updates');
 const { createClickCounter } = require('./click-rules');
-const { createLoginLimiter } = require('./login-limiter');
+const { createLoginLimiter, createGate } = require('./login-limiter');
 const { createSsoAccess } = require('./sso-access');
+const { createZip } = require('./zip');
+const { toCsv } = require('./csv');
+const { qrToEps } = require('./eps');
+const { qrToPng } = require('./png');
+const { groupReferrers } = require('./sources');
+const { parseId, isHttpUrl, targetUrlError, refHost, isSameOriginRequest: sameOrigin } = require('./url-rules');
+const bulk = require('./bulk');
 const { isExpired } = views;
 
 const PORT = Number(process.env.PORT || 3000);
@@ -137,7 +144,20 @@ app.use((req, res, next) => {
   next();
 });
 app.use(compression());
-app.use(express.urlencoded({ extended: false }));
+// parameterLimit above the default 1000: the bulk download posts one "ids" field per selected link (src/bulk.js).
+// The body stays capped at 100 kB.
+app.use(express.urlencoded({ extended: false, parameterLimit: bulk.MAX_BODY_PARAMS }));
+// Every request that changes something (anything but GET/HEAD/OPTIONS) must come from this site. The session cookie is
+// SameSite=Strict already; this check holds when it is not enough: a page on a sibling subdomain or another port of the
+// same host counts as same-site, and an old browser may ignore SameSite. Browsers send Sec-Fetch-Site or Origin.
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS') return next();
+  // X-Forwarded-Host only counts from a proxy we trust (like req.ip does); otherwise anyone could set it.
+  const trusted = app.get('trust proxy fn')(req.socket.remoteAddress, 0);
+  const host = (trusted && req.get('x-forwarded-host') ? req.get('x-forwarded-host').split(',')[0].trim() : req.get('host'));
+  if (sameOrigin({ secFetchSite: req.get('sec-fetch-site'), origin: req.get('origin'), host })) return next();
+  sendError(req, res, 403, 'Ungültige Anfrage.');
+});
 // Long cache + immutable: asset URLs carry a content hash (?v=...), so a changed file gets a new URL.
 const STATIC_CACHE = { maxAge: '1y', immutable: true };
 // Dedicated route: serves CSS_CONTENT (font hash already substituted, see views.js), not the raw file.
@@ -274,17 +294,6 @@ function parseUA(ua = '') {
   else if (/safari/i.test(ua)) browser = 'Safari';
   else if (!ua) browser = '–';
   return { device, browser };
-}
-
-function refHost(referrer = '') {
-  try { return new URL(referrer).hostname; } catch { return ''; }
-}
-
-function isHttpUrl(u) {
-  try {
-    const parsed = new URL(u);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch { return false; }
 }
 
 // Time-range stats for the detail page. Each returns a gap-free values array plus sparse axis labels.
@@ -539,20 +548,24 @@ const normalizeEc = (ec) => (['L', 'M', 'Q', 'H'].includes(ec) ? ec : 'M');
 
 // Errors (e.g. content exceeds QR capacity) become 400: Express 4 does not catch async rejections,
 // which would kill the process. Download header only after success, so errors are not saved as files.
-// Encoding a PNG is synchronous: a huge size would block the whole server.
+// A PNG is written from the module matrix (src/png.js, ~1 ms): the size is capped anyway, it decides the raw data.
 const MAX_QR_PIXELS = 2048;
-async function sendQr(res, text, { format, ec = 'M', size = 512, download = false, filename = 'qrcode', color }) {
+async function renderQr(text, { format, ec = 'M', size = 512, color }) {
   const level = normalizeEc(ec);
+  if (format === 'png') {
+    const width = Math.min(Math.max(Number(size) || 512, 64), MAX_QR_PIXELS);
+    const { modules } = QRCode.create(text, { errorCorrectionLevel: level });
+    return { body: qrToPng(modules, { size: width, margin: 2, color }), type: 'png' };
+  }
+  if (format === 'eps') {
+    const { modules } = QRCode.create(text, { errorCorrectionLevel: level });
+    return { body: Buffer.from(qrToEps(modules, { margin: 2, color }), 'latin1'), type: 'application/postscript' };
+  }
+  return { body: await QRCode.toString(text, { type: 'svg', errorCorrectionLevel: level, margin: 2, color }), type: 'image/svg+xml' };
+}
+async function sendQr(res, text, { format, ec = 'M', size = 512, download = false, filename = 'qrcode', color }) {
   try {
-    let body, type;
-    if (format === 'png') {
-      const width = Math.min(Math.max(Number(size) || 512, 64), MAX_QR_PIXELS);
-      body = await QRCode.toBuffer(text, { errorCorrectionLevel: level, width, margin: 2, color });
-      type = 'png';
-    } else {
-      body = await QRCode.toString(text, { type: 'svg', errorCorrectionLevel: level, margin: 2, color });
-      type = 'image/svg+xml';
-    }
+    const { body, type } = await renderQr(text, { format, ec, size, color });
     if (download) res.setHeader('Content-Disposition', `attachment; filename="${filename}.${format}"`);
     res.type(type).send(body);
   } catch {
@@ -683,7 +696,6 @@ app.get('/login', (req, res) => {
 
 app.post('/login', asyncRoute(async (req, res) => {
   const denied = (status, error) => res.status(status).send(views.loginPage({ error, ssoEnabled: OIDC_ENABLED }));
-  if (!isSameOriginRequest(req)) return denied(403, 'Ungültige Anfrage.');
   const username = String(req.body.username || '').trim();
   const ipKey = `ip:${req.ip}`;
   // Empty username gets no name keys, else all blank attempts would share one entry; long names are cut.
@@ -695,7 +707,10 @@ app.post('/login', asyncRoute(async (req, res) => {
   }
   const user = stmts.userByName.get(username);
   const password = String(req.body.password || '');
-  const passwordOk = await verifyPasswordAsync(password, user ? user.password_hash : DUMMY_PASSWORD_HASH);
+  const release = passwordGate.enter();
+  if (!release) return denied(429, 'Der Server ist gerade ausgelastet. Bitte in einem Moment noch einmal versuchen.');
+  let passwordOk;
+  try { passwordOk = await verifyPasswordAsync(password, user ? user.password_hash : DUMMY_PASSWORD_HASH); } finally { release(); }
   if (!user || !passwordOk) {
     noteFailedLogin(ipKey);
     if (pairKey) noteFailedLogin(pairKey);
@@ -723,6 +738,10 @@ app.post('/logout', (req, res) => {
 
 // Optional access rules for SSO logins (OIDC_ALLOWED_GROUPS, OIDC_ALLOWED_EMAIL_DOMAINS), see src/sso-access.js.
 const ssoAccess = createSsoAccess({ groups: process.env.OIDC_ALLOWED_GROUPS, domains: process.env.OIDC_ALLOWED_EMAIL_DOMAINS });
+// Without a rule everyone the identity provider signs in becomes a member with access to the shared vault.
+if (OIDC_ENABLED && !ssoAccess.restricted) {
+  console.warn('SSO ist aktiv, aber ohne Zugangsregel: Jeder, den der Identity-Provider anmeldet, wird Mitglied und sieht den gemeinsamen Tresor. Mit OIDC_ALLOWED_GROUPS oder OIDC_ALLOWED_EMAIL_DOMAINS lässt sich das einschränken.');
+}
 
 // SSO login (OIDC Authorization Code + PKCE). redirect_uri comes from the first configured
 // domain (like originFor()) to match the URI registered with the identity provider.
@@ -824,7 +843,8 @@ app.post('/app/links', requireAuth, (req, res) => {
       values: { target_url: String(req.body.target_url || ''), utm, slug, title, domain, expires_at: String(req.body.expires_at || ''), visibility },
     }));
   };
-  if (!isHttpUrl(targetUrl)) return rerenderDashboard('Bitte eine gültige http(s)-URL angeben.', 'target_url');
+  const urlError = targetUrlError(targetUrl);
+  if (urlError) return rerenderDashboard(urlError, 'target_url');
   if (targetUrl.length > MAX_URL_LENGTH) return rerenderDashboard(`Die URL ist zu lang (höchstens ${MAX_URL_LENGTH} Zeichen).`, 'target_url');
   if (slug && (!/^[A-Za-z0-9\-_]{1,64}$/.test(slug) || RESERVED.has(slug.toLowerCase()))) {
     return rerenderDashboard('Slug ungültig oder reserviert.', 'slug');
@@ -846,20 +866,13 @@ app.post('/app/links', requireAuth, (req, res) => {
 // and name (guessing one name, without letting a stranger lock the real user out from elsewhere) and per
 // name with a high ceiling (a distributed attack on one account).
 const loginLimiter = createLoginLimiter();
+// At most four password checks at the same time, whatever the per-IP counters say (see createGate).
+const passwordGate = createGate({ max: 4 });
 const rateLimited = (key, max) => loginLimiter.isLimited(key, max);
 const noteFailedLogin = (key) => loginLimiter.fail(key);
 
-// Cross-site form posts (login CSRF): browsers send Sec-Fetch-Site; older ones only Origin.
-function isSameOriginRequest(req) {
-  const site = req.get('sec-fetch-site');
-  if (site) return site === 'same-origin' || site === 'none';
-  const origin = req.get('origin');
-  if (!origin) return true; // no header: not a cross-site browser form post
-  try { return new URL(origin).host === (req.get('x-forwarded-host') || req.get('host')); } catch { return false; }
-}
-
 function loadOwnLink(req, res, next) {
-  const link = stmts.linkById.get(Number(req.params.id));
+  const link = stmts.linkById.get(parseId(req.params.id));
   if (!link) return sendError(req, res, 404, 'Diesen Link gibt es nicht.');
   // 404, not 403: a foreign link must look like a missing one (else link IDs can be enumerated).
   if (!canManage(req.user, link)) return sendError(req, res, 404, 'Diesen Link gibt es nicht.');
@@ -870,7 +883,7 @@ function loadOwnLink(req, res, next) {
 // Like loadOwnLink for the /app/domains/:id/* routes that redirect-with-flash;
 // check-reachability needs a JSON 404 and checks inline.
 function loadDomain(req, res, next) {
-  const domain = stmts.domainById.get(Number(req.params.id));
+  const domain = stmts.domainById.get(parseId(req.params.id));
   if (!domain) return flashRedirect(res, '/app/domains', 'err', 'Domain nicht gefunden.');
   req.domain = domain;
   next();
@@ -924,7 +937,8 @@ function renderLinkDetail(req, res, link, overrides = {}) {
     lastClickTs: stmts.lastClick.get(link.id)?.ts || null,
     initialRange: custom ? 'custom' : 'monat',
     customRange: custom,
-    referrers: stmts.topReferrers.all(link.id),
+    // Host names folded into platforms ("l.instagram.com" + "instagram.com" -> Instagram), see src/sources.js
+    referrers: groupReferrers(stmts.topReferrers.all(link.id)),
     devices: stmts.deviceSplit.all(link.id),
     browsers: stmts.browserSplit.all(link.id),
     languages: stmts.languageSplit.all(link.id),
@@ -958,9 +972,13 @@ app.get('/app/links/:id', requireAuth, loadOwnLink, (req, res) => {
 app.post('/app/links/:id/update', requireAuth, loadOwnLink, (req, res) => {
   const { targetUrl, utm, title, visibility, domain, expiresAt } = readLinkFields(req);
   const ownerOrAdmin = isOwnerOrAdmin(req.user, req.link);
-  if (!isHttpUrl(targetUrl) || targetUrl.length > MAX_URL_LENGTH) {
+  // A changed target URL gets the full check (no control characters, no user name before the @); an unchanged one only
+  // has to be a web address, so a link saved before these rules can still have its title or expiry edited.
+  const urlUnchanged = targetUrl === Utm.canonicalUrl(req.link.target_url);
+  const urlError = urlUnchanged ? (isHttpUrl(targetUrl) ? null : 'Ungültige URL.') : targetUrlError(targetUrl);
+  if (urlError || targetUrl.length > MAX_URL_LENGTH) {
     return renderLinkDetail(req, res, req.link, {
-      error: targetUrl.length > MAX_URL_LENGTH ? `URL zu lang (höchstens ${MAX_URL_LENGTH} Zeichen) – nichts geändert.` : 'Ungültige URL – nichts geändert.',
+      error: targetUrl.length > MAX_URL_LENGTH ? `URL zu lang (höchstens ${MAX_URL_LENGTH} Zeichen) – nichts geändert.` : `${urlError} Nichts geändert.`,
       errorField: 'target_url',
       // keep the submitted visibility (only owner/admin can change it; others see the stored value)
       values: { target_url: String(req.body.target_url || ''), utm, title, domain, expiresAtLocal: String(req.body.expires_at || ''), visibility: ownerOrAdmin ? visibility : req.link.visibility },
@@ -987,17 +1005,77 @@ app.post('/app/links/:id/delete', requireAuth, loadOwnLink, (req, res) => {
   flashRedirect(res, '/app', 'ok', 'Link gelöscht.');
 });
 
+// What a QR code of a link contains: the short link plus the marker "?q". The redirect ignores query parameters, so the
+// code works like the plain link, but a visit through it is counted as a QR scan (channel 'qr'). Codes printed before
+// the marker existed hold the plain link and keep counting as direct visits. The copy button and the text show the
+// plain short link.
+const QR_MARKER = '?q';
+const qrUrl = (link, req) => shortUrl(link, req) + QR_MARKER;
+
 // QR for a link the user owns (or as admin)
-app.get('/app/links/:id/qr.:format(svg|png)', requireAuth, loadOwnLink, async (req, res) => {
-  await sendQr(res, shortUrl(req.link, req), qrOpts(req, `qr-${req.link.slug}`));
+app.get('/app/links/:id/qr.:format(svg|png|eps)', requireAuth, loadOwnLink, async (req, res) => {
+  await sendQr(res, qrUrl(req.link, req), qrOpts(req, `qr-${req.link.slug}`));
 });
+
+// ---------------------------------------------------------------------------
+// Bulk download for the checkboxes in the link lists (dashboard and both vaults): the QR codes of the
+// selected links as one ZIP, or their data as CSV. POST keeps the ids out of URLs and access logs.
+// ---------------------------------------------------------------------------
+// Which action, how many links and which of them the user may see: src/bulk.js (with tests).
+const BULK_PNG_SIZE = 1024;
+// At most two QR ZIPs at once, one per person: building up to 1000 codes is synchronous work (a few ms each, handed back
+// to the event loop between two codes), and a member could otherwise run many in parallel.
+const zipSlots = bulk.createSlots({ total: 2, perUser: 1 });
+// Where to land again after an error (the flash shows there); anything else falls back to the dashboard.
+const BULK_BACK = new Set(['/app', '/app/user-vault', '/app/org-vault']);
+
+app.post('/app/links/bulk', requireAuth, asyncRoute(async (req, res) => {
+  const back = BULK_BACK.has(req.body.from) ? req.body.from : '/app';
+  const fail = (msg) => flashRedirect(res, back, 'err', msg);
+  const picked = bulk.selectLinks(req.body, { getLink: (id) => stmts.linkById.get(id), canSee: (l) => canManage(req.user, l) });
+  if (picked.error) return fail(picked.error);
+  const { action, links } = picked;
+
+  const now = new Date();
+  const stamp = `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}`;
+  if (action === 'csv') {
+    const rows = links.map((l) => [
+      shortUrl(l, req), l.target_url, l.title, l.visibility === 'org' ? 'Organisation' : 'Persönlich',
+      isExpired(l) ? 'Abgelaufen' : 'Aktiv', l.expires_at, l.created_at, l.clicks_total,
+    ]);
+    res.setHeader('Content-Disposition', `attachment; filename="snar-links-${stamp}.csv"`);
+    return res.type('csv').send(toCsv(
+      ['Kurzlink', 'Ziel-URL', 'Beschreibung', 'Sichtbarkeit', 'Status', 'Läuft ab (UTC)', 'Erstellt am (UTC)', 'Klicks'], rows));
+  }
+
+  const format = action.slice(3); // qr-svg, qr-png, qr-eps
+  const release = zipSlots.acquire(req.user.id);
+  if (!release) return fail('Es läuft gerade schon ein Download. Bitte einen Moment warten und noch einmal versuchen.');
+  const names = bulk.zipNames(links, format);
+  const files = [];
+  try {
+    for (const [i, l] of links.entries()) {
+      if (res.destroyed) return; // the browser gave up: stop spending CPU on it
+      const { body } = await renderQr(qrUrl(l, req), { format, size: BULK_PNG_SIZE });
+      files.push({ name: names[i], data: body });
+      // Rendering is synchronous work: let other requests through between two codes.
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  } catch {
+    return fail('Ein QR-Code konnte nicht erzeugt werden.');
+  } finally {
+    release();
+  }
+  res.setHeader('Content-Disposition', `attachment; filename="snar-qr-codes-${stamp}.zip"`);
+  res.type('zip').send(createZip(files));
+}));
 
 // ---------------------------------------------------------------------------
 // Personal vault (only the user's own links, regardless of role)
 // ---------------------------------------------------------------------------
 app.get('/app/user-vault', requireAuth, (req, res) => {
   const links = stmts.linksByOwnerPrivate.all(req.user.id);
-  res.send(views.myVaultPage({ links, user: req.user, shortUrl: (l) => shortUrl(l, req) }));
+  res.send(views.myVaultPage({ links, user: req.user, flash: currentFlash(req), shortUrl: (l) => shortUrl(l, req) }));
 });
 
 // ---------------------------------------------------------------------------
@@ -1009,6 +1087,7 @@ app.get('/app/org-vault', requireAuth, (req, res) => {
   res.send(views.vaultPage({
     links,
     user: req.user,
+    flash: currentFlash(req),
     shortUrl: (l) => shortUrl(l, req),
   }));
 });
@@ -1057,7 +1136,7 @@ app.post('/app/qr', requireAuth, async (req, res) => {
 app.post('/app/qr/download', requireAuth, async (req, res) => {
   const data = String(req.body.data || '').slice(0, 2000);
   if (!data) return sendError(req, res, 400, 'Es gibt keinen Inhalt für den QR-Code.');
-  const format = req.body.format === 'png' ? 'png' : 'svg';
+  const format = ['png', 'eps'].includes(req.body.format) ? req.body.format : 'svg';
   const color = qrColors(String(req.body.dark || ''), String(req.body.light || ''));
   await sendQr(res, data, { format, ec: String(req.body.ec || 'M'), size: 1024, download: true, filename: 'qr-statisch', color });
 });
@@ -1094,7 +1173,7 @@ app.post('/app/users', requireAuth, requireAdmin, asyncRoute(async (req, res) =>
 }));
 
 app.post('/app/users/:id/delete', requireAuth, requireAdmin, (req, res) => {
-  const target = stmts.userById.get(Number(req.params.id));
+  const target = stmts.userById.get(parseId(req.params.id));
   if (!target) return flashRedirect(res, '/app/users', 'err', 'Nutzer:in nicht gefunden.');
   if (target.id === req.user.id) {
     return flashRedirect(res, '/app/users', 'err', 'Du kannst dich nicht selbst löschen.');
@@ -1102,7 +1181,7 @@ app.post('/app/users/:id/delete', requireAuth, requireAdmin, (req, res) => {
   if (target.role === 'admin' && stmts.countAdmins.get().n <= 1) {
     return flashRedirect(res, '/app/users', 'err', 'Der letzte Admin kann nicht gelöscht werden.');
   }
-  const reassignId = Number(req.body.reassign_to);
+  const reassignId = parseId(req.body.reassign_to);
   const reassignTo = reassignId && reassignId !== target.id ? stmts.userById.get(reassignId) : null;
   const recipient = reassignTo || req.user; // fallback: the admin performing the action
   deleteUserAndReassign(target.id, recipient.id);
@@ -1112,7 +1191,7 @@ app.post('/app/users/:id/delete', requireAuth, requireAdmin, (req, res) => {
 
 // Lets a deleted SSO account log in again (it is created anew with a fresh, empty account).
 app.post('/app/users/sso-blocked/:id/unblock', requireAuth, requireAdmin, (req, res) => {
-  stmts.deleteSsoBlocked.run(Number(req.params.id));
+  stmts.deleteSsoBlocked.run(parseId(req.params.id));
   flashRedirect(res, '/app/users', 'ok', 'SSO-Zugang freigegeben. Bei der nächsten Anmeldung wird das Konto neu angelegt.');
 });
 
@@ -1231,7 +1310,7 @@ async function resolvesToPrivateIp(hostname) {
   }
 }
 app.post('/app/domains/:id/check-reachability', requireAuth, requireAdmin, async (req, res) => {
-  const domain = stmts.domainById.get(Number(req.params.id));
+  const domain = stmts.domainById.get(parseId(req.params.id));
   if (!domain) return res.status(404).json({ ok: false, reason: 'Domain nicht gefunden.' });
   let hostname;
   try { hostname = new URL(domain.origin).hostname; } catch { return res.json({ ok: false, reason: 'Die gespeicherte Domain ist keine gültige Adresse.' }); }
@@ -1311,6 +1390,8 @@ app.get('/:slug([A-Za-z0-9\-_]{1,64})', (req, res, next) => {
 
   const { device, browser } = parseUA(req.get('user-agent'));
   const lang = (req.get('accept-language') || '').split(',')[0].slice(0, 8);
+  // "?q" (any value) is the marker new QR codes carry; nothing else is read from the query and none of it is passed on.
+  const channel = Object.hasOwn(req.query, 'q') ? 'qr' : '';
 
   // Redirect first, click insert after: stats must never delay the redirect (and never depend on counting).
   res.set('Cache-Control', 'no-store'); // 302 + no-store => target stays changeable at any time
@@ -1318,7 +1399,7 @@ app.get('/:slug([A-Za-z0-9\-_]{1,64})', (req, res, next) => {
 
   if (!shouldCountClick({ method: req.method, ip: req.ip, userAgent: req.get('user-agent'), linkId: link.id })) return;
   try {
-    stmts.insertClick.run(link.id, refHost(req.get('referer')), device, browser, lang);
+    stmts.insertClick.run(link.id, refHost(req.get('referer')), device, browser, lang, channel);
   } catch { /* stats must never block the redirect */ }
 });
 

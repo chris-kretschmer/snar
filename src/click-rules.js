@@ -29,4 +29,4 @@ function createClickCounter({ now = Date.now } = {}) {
   };
 }
 
-module.exports = { createClickCounter, BOT_UA_RE };
+module.exports = { createClickCounter };

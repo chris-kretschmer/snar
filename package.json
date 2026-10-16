@@ -7,7 +7,8 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "update-sources": "node scripts/update-sources.js"
   },
   "engines": {
     "node": "^20.19 || >=22.12"

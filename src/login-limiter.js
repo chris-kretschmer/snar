@@ -28,4 +28,20 @@ function createLoginLimiter({ windowMs = 15 * 60 * 1000, maxKeys = 10000, now = 
   };
 }
 
-module.exports = { createLoginLimiter };
+// Caps how many password checks (scrypt: ~100 ms of CPU and 32 MB each) run at the same time. Without it, attempts
+// that dodge the per-IP limit (a spoofed X-Forwarded-For, many user names) could keep every CPU busy. A request that
+// finds no free place is turned away instead of queued. enter() returns a release function, or null when full.
+function createGate({ max = 4 } = {}) {
+  let running = 0;
+  return {
+    enter() {
+      if (running >= max) return null;
+      running++;
+      let done = false;
+      return () => { if (!done) { done = true; running--; } };
+    },
+    size() { return running; },
+  };
+}
+
+module.exports = { createLoginLimiter, createGate };

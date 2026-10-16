@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createClickCounter } = require('../src/click-rules.js');
-const { createLoginLimiter } = require('../src/login-limiter.js');
+const { createLoginLimiter, createGate } = require('../src/login-limiter.js');
 const { createSsoAccess } = require('../src/sso-access.js');
 
 const FIREFOX = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0';
@@ -66,4 +66,22 @@ test('sso access: no rule means open, groups or verified e-mail domains restrict
   assert.equal(rules.allowed({ email: 'a@evil.example', email_verified: true }), false);
   assert.equal(rules.allowed({ groups: 'snar-users' }), false, 'groups must be an array');
   assert.equal(createSsoAccess({ domains: 'example.org' }).needsGroupsClaim, false);
+});
+
+test('password gate: only a few checks at once, a full gate turns the next one away, release frees a place exactly once', () => {
+  const gate = createGate({ max: 2 });
+  const a = gate.enter();
+  const b = gate.enter();
+  assert.equal(typeof a, 'function');
+  assert.equal(typeof b, 'function');
+  assert.equal(gate.enter(), null, 'full');
+  assert.equal(gate.size(), 2);
+  a(); a(); // a second release of the same place must not free another one
+  assert.equal(gate.size(), 1);
+  const c = gate.enter();
+  assert.equal(typeof c, 'function');
+  assert.equal(gate.enter(), null, 'full again, the double release did not open a second place');
+  b(); c();
+  assert.equal(gate.size(), 0);
+  assert.equal(typeof gate.enter(), 'function');
 });

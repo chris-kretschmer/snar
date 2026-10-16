@@ -1,0 +1,21 @@
+{
+ "note": "Hand-maintained additions to the Matomo list (src/data/sources.json). Entries here win over it. Host names only: snar stores no paths.",
+ "rename": {
+  "Twitter": "X",
+  "Yahoo!": "Yahoo",
+  "Yahoo! Japan": "Yahoo Japan",
+  "reddit": "Reddit",
+  "tumblr": "Tumblr",
+  "XING": "Xing"
+ },
+ "families": ["Google", "Bing", "Yahoo! Japan", "Yahoo!", "Yandex", "Seznam"],
+ "sources": [
+  {"name": "WhatsApp", "group": "messenger", "hosts": ["whatsapp.com", "web.whatsapp.com", "api.whatsapp.com", "wa.me"]},
+  {"name": "Microsoft Teams", "group": "messenger", "hosts": ["teams.microsoft.com", "teams.live.com"]},
+  {"name": "Slack", "group": "messenger", "hosts": ["slack.com", "app.slack.com"]},
+  {"name": "Gmail", "group": "email", "hosts": ["mail.google.com", "com.google.android.gm"]},
+  {"name": "Outlook", "group": "email", "hosts": ["outlook.live.com", "outlook.office.com", "outlook.office365.com"]},
+  {"name": "Yahoo Mail", "group": "email", "hosts": ["mail.yahoo.com"]},
+  {"name": "Google", "group": "search", "hosts": ["com.google.android.googlequicksearchbox", "com.google.android.apps.searchlite"]}
+ ]
+}

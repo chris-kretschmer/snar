@@ -57,6 +57,15 @@ const MIGRATIONS = [
       db.exec('CREATE UNIQUE INDEX idx_users_username_nocase ON users(username COLLATE NOCASE)');
     },
   },
+  {
+    // How a visitor arrived, as far as the short link itself tells: 'qr' = the link was opened with the marker "?q" that
+    // new QR codes carry (see qrUrl() in server.js), '' = everything else. Older clicks stay ''.
+    version: 5,
+    name: 'clicks.channel',
+    up(db) {
+      db.exec("ALTER TABLE clicks ADD COLUMN channel TEXT NOT NULL DEFAULT ''");
+    },
+  },
 ];
 
 const pad = (n) => String(n).padStart(2, '0');

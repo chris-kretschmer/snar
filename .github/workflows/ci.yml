@@ -27,7 +27,7 @@ jobs:
 
       - name: Syntax-check all source files
         run: |
-          for f in src/*.js public/*.js; do
+          for f in src/*.js public/*.js scripts/*.js; do
             echo "Checking $f"
             node --check "$f"
           done

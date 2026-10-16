@@ -6,6 +6,7 @@ const path = require('path');
 const crypto = require('crypto');
 const Theme = require('../public/theme-shared.js');
 const Utm = require('../public/utm-shared.js');
+const { platformOf, QR_SCAN, DIRECT, QR_HINT, DIRECT_HINT } = require('./sources');
 const APP_VERSION = require('../package.json').version;
 
 // Cache busting for /static/*: assets are cached aggressively (maxAge in
@@ -112,7 +113,11 @@ function langInfo(tag) {
 // Below 1000px the rows turn into two-line cards without the language column
 // (see .clicks-table in style.css).
 function recentClicksTable(clicks) {
-  const ref = (c) => esc(c.referrer || '(direkt / QR-Scan)');
+  // A known platform shows its name ("Instagram"), the host it came from goes into the tooltip.
+  // A scan of a QR code with the "?q" marker is "QR-Scan", a visit without referrer "Direkt / unbekannt".
+  const platform = (c) => (c.referrer && c.channel !== 'qr' ? platformOf(c.referrer) : null);
+  const ref = (c) => esc(c.channel === 'qr' ? QR_SCAN : !c.referrer ? DIRECT : platform(c) ? platform(c).name : c.referrer.replace(/^www\./i, ''));
+  const refTitle = (c) => esc(c.channel === 'qr' ? QR_HINT : !c.referrer ? DIRECT_HINT : platform(c) ? `${platform(c).name} (${c.referrer})` : c.referrer);
   const device = (c) => {
     const key = { Mobil: 'device-phone', Tablet: 'device-tablet', Desktop: 'device-desktop' }[c.device];
     // Icon only; name stays for screen readers. Unknown values fall back to text.
@@ -122,7 +127,7 @@ function recentClicksTable(clicks) {
     <thead><tr><th scope="col" class="col-time">Zeitpunkt</th><th scope="col" class="col-ref">Quelle</th><th scope="col" class="col-device">Gerät</th><th scope="col" class="col-browser">Browser</th><th scope="col" class="col-lang">Sprache</th></tr></thead>
     <tbody>${clicks.map(c => `<tr class="click-row">
       <td class="col-time"><time datetime="${parseDbDate(c.ts).toISOString()}">${fmtDate(c.ts)}</time></td>
-      <td class="col-ref" translate="no" title="${ref(c)}">${ref(c)}</td>
+      <td class="col-ref" translate="no" title="${refTitle(c)}">${ref(c)}</td>
       <td class="col-device" title="${esc(c.device)}">${device(c)}</td>
       <td class="col-browser">${esc(c.browser)}</td>
       <td class="col-lang">${(({ code, name }) => `<abbr title="${esc(name)}">${esc(code)}</abbr>`)(langInfo(c.lang))}</td>
@@ -391,11 +396,40 @@ function utmUrlLine(targetUrl, utm) {
   return `<p class="muted hint utm-url-line">Aufgerufen wird: <span translate="no">${esc(Utm.buildTargetUrl(targetUrl, utm))}</span></p>`;
 }
 
+// Bar above a selectable link table. A real form (POST /app/links/bulk): the row checkboxes join it through
+// form="bulk-form", like the detail page's fields join #edit-form, so the search box in the toolbar is not part
+// of it (Enter there must not download anything). Works without JS by ticking rows one by one; app.js adds
+// "select all", the count and keeps the downloads disabled while nothing is ticked. The three QR formats sit in
+// one menu (<details>, so it opens without JS too); CSV is a button of its own.
+// The select-all box sits in the header of the checkbox column, above the row boxes; app.js shows it (no JS: no box,
+// the rows are ticked one by one).
+const CHECK_TH = '<th class="check-col"><span class="sr-only">Auswahl</span><label class="bulk-all" hidden title="Alle auswählen"><input type="checkbox" id="bulk-all" aria-label="Alle auswählen"></label></th>';
+function bulkBar(from, inToolbar = false) {
+  return `<form id="bulk-form" class="bulk-bar${inToolbar ? ' in-toolbar' : ''}" method="post" action="/app/links/bulk" aria-label="Auswahl herunterladen">
+      <input type="hidden" name="from" value="${esc(from)}">
+      <span class="bulk-count" id="bulk-count" aria-live="polite"></span>
+      <button type="button" class="ghost bulk-clear" hidden>Auswahl aufheben</button>
+      <div class="bulk-actions">
+        <details class="bulk-menu">
+          <summary class="ghost">QR-Codes herunterladen</summary>
+          <div class="bulk-menu-list">
+            <button type="submit" name="action" value="qr-svg">SVG</button>
+            <button type="submit" name="action" value="qr-eps">EPS</button>
+            <button type="submit" name="action" value="qr-png">PNG</button>
+          </div>
+        </details>
+        <button type="submit" name="action" value="csv" class="ghost">Liste (CSV)</button>
+      </div>
+    </form>`;
+}
+
 // Search/pagination table shared by dashboard, vaults, user & domain admin;
 // app.js hooks in via #links-search/.linktable/.page-size-btn/#links-prev/
 // #links-next. showSearch=false (domains): app.js's search does nothing
 // without #links-search, no extra handling needed.
-function searchTable({ links, theadHtml, rowsHtml, emptyText, showSearch = true }) {
+// selectable (link lists only): rows carry a checkbox (linkTableRow) and the toolbar row (next to the search) downloads the
+// ticked ones, see bulkBar(). bulkFrom = the page to return to when the server refuses (flash shows there).
+function searchTable({ links, theadHtml, rowsHtml, emptyText, showSearch = true, selectable = false, bulkFrom = '/app' }) {
   if (!links.length) return `<div class="empty">${emptyText}</div>`;
   const showToolbar = showSearch || links.length > 10;
   return `
@@ -403,6 +437,7 @@ function searchTable({ links, theadHtml, rowsHtml, emptyText, showSearch = true 
     ${showToolbar ? `
     <div class="table-toolbar">
       ${showSearch ? `<input id="links-search" class="search-input" placeholder="Suchen…" aria-label="Suchen" autocomplete="off">` : ''}
+      ${selectable ? bulkBar(bulkFrom, true) : ''}
       ${links.length > 10 ? `
       <div class="page-size-group">
         <button type="button" class="page-size-btn" data-page-size="10">10</button>
@@ -414,8 +449,9 @@ function searchTable({ links, theadHtml, rowsHtml, emptyText, showSearch = true 
         <button type="button" id="links-next" class="pagination-arrow" aria-label="Nächste Seite">${icon('chevron-right', 'navicon')}</button>
       </div>` : ''}
     </div>` : ''}
+    ${selectable && !showToolbar ? bulkBar(bulkFrom) : ''}
     <div class="table-scroll">
-    <table class="tbl linktable">
+    <table class="tbl linktable${selectable ? ' selectable' : ''}">
       <thead><tr>${theadHtml}</tr></thead>
       <tbody>${rowsHtml}</tbody>
     </table>
@@ -435,6 +471,7 @@ function linkTableRow(l, short, { extraColumn = null } = {}) {
   const status = isExpired(l) ? `<span class="badge expired">Abgelaufen</span>` : `<span class="badge active">Aktiv</span>`;
   return `
 <tr data-search="${searchHay}">
+  <td class="check-cell" data-label="Auswählen"><label class="bulk-pick"><input type="checkbox" name="ids" value="${l.id}" form="bulk-form" aria-label="Auswählen: ${esc(l.slug)}"></label></td>
   <td class="url-cell" data-label="Ziel-URL"><a translate="no" href="${esc(l.target_url)}" target="_blank" rel="noopener" title="${esc(l.target_url)}">${esc(l.target_url)}</a></td>
   <td class="desc-cell" data-label="Beschreibung">${l.title ? esc(l.title) : '<span class="muted">–</span>'}</td>
   <td class="muted nowrap" data-label="Erstellt am">${fmtDate(l.created_at)}</td>
@@ -507,9 +544,10 @@ function dashboard({ links, shortUrl, domains, user, flash, error = null, errorF
 <section>
   ${searchTable({
     links,
-    theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Sichtbarkeit</th><th>Status</th><th>Kurzlink</th><th>Klicks</th><th></th>`,
+    theadHtml: `${CHECK_TH}<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Sichtbarkeit</th><th>Status</th><th>Kurzlink</th><th>Klicks</th><th></th>`,
     rowsHtml: links.map(l => linkTableRow(l, shortUrl(l), { extraColumn: 'visibility' })).join(''),
     emptyText: 'Noch keine eigenen Links. Leg oben den ersten an – der QR-Code dazu entsteht automatisch.',
+    selectable: true, bulkFrom: '/app',
   })}
 </section>
 </div>
@@ -517,7 +555,7 @@ function dashboard({ links, shortUrl, domains, user, flash, error = null, errorF
   return layout({ title: 'Dashboard', body, user, flash, page: 'dashboard' });
 }
 
-function vaultPage({ links, shortUrl, user }) {
+function vaultPage({ links, shortUrl, user, flash = null }) {
   const body = `
 <main>
 <div class="page">
@@ -526,16 +564,17 @@ function vaultPage({ links, shortUrl, user }) {
 </div>
 ${searchTable({
     links,
-    theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Erstellt von</th><th>Kurzlink</th><th>Klicks</th><th></th>`,
+    theadHtml: `${CHECK_TH}<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Erstellt von</th><th>Kurzlink</th><th>Klicks</th><th></th>`,
     rowsHtml: links.map(l => linkTableRow(l, shortUrl(l), { extraColumn: 'owner' })).join(''),
     emptyText: 'Der Tresor ist leer. Stelle einen Link auf „Organisation“, damit er hier für alle erscheint.',
+    selectable: true, bulkFrom: '/app/org-vault',
   })}
 </div>
 </main>`;
-  return layout({ title: 'Gemeinsamer Tresor', body, user, page: 'vault' });
+  return layout({ title: 'Gemeinsamer Tresor', body, user, flash, page: 'vault' });
 }
 
-function myVaultPage({ links, shortUrl, user }) {
+function myVaultPage({ links, shortUrl, user, flash = null }) {
   const body = `
 <main>
 <div class="page">
@@ -544,13 +583,14 @@ function myVaultPage({ links, shortUrl, user }) {
 </div>
 ${searchTable({
     links,
-    theadHtml: `<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Kurzlink</th><th>Klicks</th><th></th>`,
+    theadHtml: `${CHECK_TH}<th>Ziel-URL</th><th>Beschreibung</th><th>Erstellt am</th><th>Status</th><th>Kurzlink</th><th>Klicks</th><th></th>`,
     rowsHtml: links.map(l => linkTableRow(l, shortUrl(l))).join(''),
     emptyText: 'Noch keine persönlichen Links. Lege unter „Erstellen“ einen mit Sichtbarkeit „Persönlich“ an.',
+    selectable: true, bulkFrom: '/app/user-vault',
   })}
 </div>
 </main>`;
-  return layout({ title: 'Persönlicher Tresor', body, user, page: 'myvault' });
+  return layout({ title: 'Persönlicher Tresor', body, user, flash, page: 'myvault' });
 }
 
 // Chart math/markup lives in public/chart-shared.js, also loaded by the
@@ -669,7 +709,8 @@ function splitBreakdownList(rows, allClicks, { title = '', id = '', limit = 5 } 
   if (!rows.length) return `<p class="muted">Noch keine Daten.</p>`;
   const shown = rows.reduce((a, r) => a + r.n, 0);
   const base = Math.max(allClicks || 0, shown);
-  const items = rows.map(r => ({ name: r.ref ?? r.device ?? r.browser ?? r.lang ?? '–', n: r.n }));
+  // hints: the host names folded into one platform row (src/sources.js), shown as a tooltip
+  const items = rows.map(r => ({ name: r.ref ?? r.device ?? r.browser ?? r.lang ?? '–', n: r.n, hint: r.hint || '' }));
   // Clicks beyond the query cap: not a real entry, so not counted as one.
   const tail = base > shown ? { name: 'Weitere', n: base - shown, rest: true } : null;
   const full = tail ? [...items, tail] : items;
@@ -677,8 +718,9 @@ function splitBreakdownList(rows, allClicks, { title = '', id = '', limit = 5 } 
   const item = (it) => {
     const pct = pctOf(it.n);
     const name = esc(it.name || '–');
+    const title = it.hint ? `${name} (${esc(it.hint)})` : name;
     return `<li${it.rest ? ' class="rest"' : ''}>
-      <div class="row"><span class="name" title="${name}">${name}</span><span class="val-n">${clicksLabel(it.n)}</span><span class="val-pct">${pctFormat.format(pct)} %</span></div>
+      <div class="row"><span class="name" title="${title}">${name}</span><span class="val-n">${clicksLabel(it.n)}</span><span class="val-pct">${pctFormat.format(pct)} %</span></div>
       <div class="meter"><span style="width:${pct.toFixed(2)}%"></span></div>
     </li>`;
   };
@@ -731,6 +773,7 @@ function linkDetail({ link, origin, short, domains, stats, expiresAtLocal, expir
   <img src="/app/links/${link.id}/qr.svg" alt="QR-Code für ${esc(short)}" width="220" height="220">
   <div class="dl">
     <a class="btn ghost" href="/app/links/${link.id}/qr.svg?download=1">SVG</a>
+    <a class="btn ghost" href="/app/links/${link.id}/qr.eps?download=1">EPS</a>
     <a class="btn ghost" href="/app/links/${link.id}/qr.png?size=1024&download=1">PNG</a>
   </div>
 </section>
@@ -924,19 +967,19 @@ function staticQrPage({ content = '', ec = 'M', dark = '#000000', light = '#ffff
 <div class="flex-col gap-6">
   <div class="detail-head">
     <h1>Statischer QR-Code Generator</h1>
-    <button type="submit" form="qr-form" class="head-action">Erzeugen</button>
   </div>
   <p class="muted flush">Inhalt landet direkt im QR-Code. Anders als bei „Erstellen“ nicht mehr änderbar, ohne Statistik, ohne Speicherung.</p>
 </div>
 
 <div class="detail-grid">
-<section class="qrbox">
+<section class="qrbox${svg ? '' : ' qrbox-empty'}">
   ${svg ? `
   <div${transparentBg ? ' class="qr-preview-checker"' : ''}>${svg}</div>
   <div class="dl">
     <form method="post" action="/app/qr/download">${dlFields}<input type="hidden" name="format" value="svg"><button class="btn ghost" type="submit">SVG</button></form>
+    <form method="post" action="/app/qr/download">${dlFields}<input type="hidden" name="format" value="eps"><button class="btn ghost" type="submit">EPS</button></form>
     <form method="post" action="/app/qr/download">${dlFields}<input type="hidden" name="format" value="png"><button class="btn ghost" type="submit">PNG</button></form>
-  </div>` : `<p class="muted flush">Vorschau erscheint hier, sobald du „Erzeugen“ klickst.</p>`}
+  </div>` : `<p class="muted flush">Hier erscheint dein QR-Code, sobald du „Erzeugen“ klickst.</p>`}
 </section>
 
 <section class="card">
@@ -946,6 +989,12 @@ function staticQrPage({ content = '', ec = 'M', dark = '#000000', light = '#ffff
     ${qrTypePanels(v)}
     <div class="radio-row">
       ${colorFields(dark, light, transparentBg, lightPick)}
+      <div class="create-actions">
+        <button type="submit" class="btn-create">
+          <svg width="15" height="15" viewBox="0 0 15 15" fill="none" aria-hidden="true"><path d="M7.5 1.5v12M1.5 7.5h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          Erzeugen
+        </button>
+      </div>
     </div>
   </form>
 </section>
