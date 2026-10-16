@@ -2,7 +2,13 @@
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-16
+
+Upgrading from 2.0.0: nothing to do. The first start runs migration 5 (`clicks.channel`) after an automatic backup file next to the database; going back to 2.0.x afterwards is not supported. The image is built on Node 24.
+
 ### Added
+- Ready-made Docker image for amd64 and arm64 on the GitHub Container Registry (`ghcr.io/chris-kretschmer/snar`, tags `2.1.0`, `2.1`, `2` and `latest`), built by the new workflow `.github/workflows/release.yml` when a version tag is pushed (it checks that the tag matches `package.json`, runs the tests and `npm audit` first, and attaches provenance and an SBOM). `compose.yaml` names the image; `SNAR_VERSION` in `.env` pins a release; `docker compose pull && docker compose up -d` updates.
+- `SECURITY.md` (private reporting through GitHub, what to expect, what is in scope) and `CLA.md` (contributor agreement; the community edition stays under the AGPL).
 - Campaign parameters (UTM): `utm_source`, `utm_medium`, `utm_campaign`, `utm_term` and `utm_content` can be entered as separate fields under "Erweiterte Link-Details" when creating or editing a link. They are appended to the target URL on save; the URL that is actually opened is shown under the target URL field. Shared logic in `public/utm-shared.js`.
 - Bulk download: the link lists (dashboard, personal and shared vault) have a checkbox column and a bar to download the selected links, as a ZIP of QR codes (SVG, EPS or PNG at 1024 px, each up to 1000 links) or as a CSV list for Excel (up to 2000). Links you may not open are left out. The ZIP writer (`src/zip.js`) and CSV writer (`src/csv.js`) need no new dependency; CSV cells that start with `=`, `+`, `-` or `@` are protected against spreadsheet formulas. Building a ZIP is synchronous work, so only two QR ZIPs run at a time and one per person; a further request is told to wait. The ids must be plain decimal numbers.
 - EPS download for QR codes (vector, for print shops and layout programs): next to SVG and PNG on the link detail page and in the QR code generator, and as a ZIP of up to 1000 codes in the bulk download. One filled path per code, so there are no seams between modules; EPS has no transparency, so a transparent background is simply not painted. Written by `src/eps.js` without a new dependency.
@@ -10,6 +16,7 @@
 - Sources as platforms: the "Quelle" list and "Letzte Klicks" show "Instagram", "X", "YouTube", "Gmail", "ChatGPT" and so on instead of referrer host names such as `l.instagram.com`, `t.co` or `youtu.be`; hosts of one platform are added up (the host names stay in the tooltip), unknown hosts are shown as before. The mapping happens when a page is drawn, so old clicks are covered too and nothing in the database changes. Data: the community list of the Matomo project (CC0, `src/data/sources.json`, rebuilt with `npm run update-sources`) plus our own additions (`src/data/sources-own.json`); see `NOTICE`. snar does not fetch anything at runtime.
 
 ### Changed
+- The README is now in English and corrected where it was out of date (PNG timing, two sentences without punctuation). `CONTRIBUTING.md` describes the test suite and the CLA.
 - `.gitignore` excludes only the top-level `data/` directory (it also matched `src/data/`).
 - Link lists: search and selection share one toolbar row; the three QR formats sit in one menu "QR-Codes herunterladen" (SVG, EPS, PNG) next to "Liste (CSV)"; the select-all box moved into the table header. QR code generator: "Erzeugen" sits in the card like "Erstellen" and stays disabled until the field the active tab needs is filled; the empty preview text is centred.
 - CI also syntax-checks `scripts/*.js`; three exports nobody imported (`BOT_UA_RE`, `splitList`, `GROUP_LABELS`) are gone.
@@ -90,6 +97,7 @@
 ### Added
 - Initial public release.
 
-[Unreleased]: https://github.com/chris-kretschmer/snar/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/chris-kretschmer/snar/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/chris-kretschmer/snar/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/chris-kretschmer/snar/compare/v1.0.0...v2.0.0
 [1.0.0]: https://github.com/chris-kretschmer/snar/releases/tag/v1.0.0

@@ -52,7 +52,7 @@ jobs:
           node src/server.js &
           SERVER_PID=$!
           echo "Waiting for /healthz..."
-          for i in $(seq 1 20); do
+          for _ in $(seq 1 20); do
             if curl -sf http://localhost:3000/healthz > /dev/null; then
               echo "Server is reachable."
               kill "$SERVER_PID"

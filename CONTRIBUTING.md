@@ -30,11 +30,12 @@ The `CREATE TABLE` block in `src/db.js` is the frozen baseline (schema version 1
 
 ## Before opening a PR
 
-There's no full automated test suite yet (see "Testing" below if you'd like to help with that) — please run these manually:
+Please run these locally:
 
-1. `node --check src/*.js` — catches syntax errors.
-2. Start the app (see above) and actually click through the part of the UI you touched. If your change is server-side only, a `curl` round-trip is fine.
-3. The CI workflow ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) additionally runs a syntax check and a boot smoke test (`/healthz`) on every PR automatically, regardless of which files changed.
+1. `npm test` — the test suite (see "Testing" below).
+2. `node --check src/*.js public/*.js scripts/*.js` — catches syntax errors.
+3. Start the app (see above) and actually click through the part of the UI you touched. If your change is server-side only, a `curl` round-trip is fine.
+4. The CI workflow ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the syntax check, the tests, `npm audit`, a boot smoke test (`/healthz`) and a Docker build on every PR automatically.
 
 ## Testing
 
@@ -66,6 +67,12 @@ Please open a GitHub issue with steps to reproduce, what you expected, and what 
 
 Be respectful. Disagreements about code and design are fine and expected — personal attacks, harassment, or bad-faith arguing are not, and will get a thread closed.
 
-## License
+## License and contributor agreement
 
-By contributing, you agree that your contribution is licensed under the project's [AGPL-3.0-or-later](LICENSE) license, same as the rest of the codebase.
+snar is licensed under the [AGPL-3.0-or-later](LICENSE). The maintainer also plans commercial editions on top of it (hosting and extra features for organisations), while the community edition stays open. For that, contributions come with a [Contributor License Agreement](CLA.md): you keep your copyright, you allow the maintainer to license your contribution under other terms as well, and every release of the community edition that contains it stays available under the AGPL.
+
+By opening a pull request you agree to the [CLA](CLA.md); the pull request template asks you to confirm it. If you cannot agree, please open an issue first.
+
+## Security
+
+Please report vulnerabilities privately, see [SECURITY.md](SECURITY.md). Do not open a public issue for them.

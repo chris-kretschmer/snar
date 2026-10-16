@@ -738,7 +738,9 @@ if (bulkForm) {
     const shownPicked = shown.filter((b) => b.checked).length;
     allBox.checked = shown.length > 0 && shownPicked === shown.length;
     allBox.indeterminate = shownPicked > 0 && shownPicked < shown.length;
-    countEl.textContent = picked ? `${picked} ausgewählt` : 'Nichts ausgewählt';
+    // Only shown once something is ticked: "Nichts ausgewählt" next to the search said what the empty boxes already show.
+    countEl.textContent = picked ? `${picked} ausgewählt` : '';
+    countEl.hidden = !picked;
     clearBtn.hidden = !picked;
     actionBtns.forEach((b) => { b.disabled = !picked; });
     // A <details> cannot be disabled: style it like a disabled button, keep it shut, tell assistive tech.

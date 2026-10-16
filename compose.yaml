@@ -1,5 +1,9 @@
 services:
   snar:
+    # Ready-made image from the GitHub Container Registry: `docker compose pull`, then `docker compose up -d`.
+    # SNAR_VERSION pins a release (for example 2.1.0); without it the newest one is used.
+    # `docker compose up -d --build` builds the image from this folder instead and tags it with the same name.
+    image: "ghcr.io/chris-kretschmer/snar:${SNAR_VERSION:-latest}"
     build: .
     container_name: snar
     restart: unless-stopped
